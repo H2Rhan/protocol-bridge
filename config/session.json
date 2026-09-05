@@ -1,0 +1,12 @@
+{
+  "_comment": "Session 边界可切换配置（机器读）。等价于执行方案 3.9.1 的 session.yaml；因离线环境不装 pyyaml，统一用 JSON。改配置即可切换重放策略，不动 adapter 与实验脚本。",
+  "session": {
+    "key_granularity": "single_task",
+    "key_fields": ["task-id"],
+    "replay_from": "full",
+    "sliding_window_n": 20,
+    "end_policy": "ttl",
+    "ttl_seconds": 1800,
+    "on_end": "archive"
+  }
+}
