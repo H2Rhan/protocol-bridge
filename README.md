@@ -22,7 +22,7 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | 命中率埋点（5 项暴露） | ✅ 框架 | injected 字段 v1.1 起真实统计；v1.2 起预热轮单列、多线程写加锁 |
 | max_tokens:0 预热路径 | ✅ 字段处理 | 用录制响应样例测 |
 | **两轮代码自查（9 bug 修复 + 回归测试）** | ✅ **v1.2 新增** | 含 3 个严重项（状态层空转 / 多轮链断 / prev_id 回传），见 `docs/REVIEW.md` 第五节 |
-| 三组对照实验 | ⏸ 等中转站 Claude 通道恢复 | `experiments/`，框架已就绪；验站脚本 `tools/verify_cache.py` |
+| 三组对照实验 | ⏸ 等 Anthropic 端点通道恢复 | `experiments/`，框架已就绪；验站脚本 `tools/verify_cache.py` |
 | TRACK04 签字确认稿 | ✅ v1.1 新增 | `docs/TRACK04_签字确认稿.md`，分工会直接签 |
 | 弹网页（本地仪表盘） | 🔜 骨架 | `src/webui/` 安全骨架 |
 
@@ -52,9 +52,9 @@ python -m src.gateway.server
   真实 usage（prompt/completion/reasoning tokens）正常归一并写入 metrics jsonl。
 - ⚠️ 本机代理 `127.0.0.1:50403` 对 POST 隧道不稳，必须 `PB_DIRECT=1`；Cloudflare 按 UA 拦 bot，网关已带浏览器 UA。
 - Anthropic 目标需 Anthropic 协议端点（Groq 无 `/v1/messages`）；网关自动带 `anthropic-version` 头（`PB_ANTHROPIC_VERSION` 可覆盖）。
-- 接中转站调试缓存链路前，先跑验站脚本确认透传（PASS 才可用）：
-  `python tools/verify_cache.py --base https://中转站域名 --model <模型> --key <key>`
-  正式实验数据口径（合租缓存污染与缓解）见方案 v3.1 §3.6.1。
+- 接 Anthropic 端点调试缓存链路前，先跑验站脚本确认透传（PASS 才可用）：
+  `python tools/verify_cache.py --base https://<端点域名> --model <模型> --key <key>`
+  正式实验数据口径（共享账号缓存污染与缓解）见方案 v3.1 §3.6.1。
 
 ## 设计要点（对应执行方案 v3）
 

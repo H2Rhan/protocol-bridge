@@ -186,10 +186,10 @@ def post_json(url: str, payload: dict, target: str = "") -> dict:
     }
     if BACKEND_KEY:
         headers["Authorization"] = f"Bearer {BACKEND_KEY}"
-        # Anthropic 官方协议用 x-api-key；中转站两种 usually 都认，两个都带无害
+        # Anthropic 官方协议用 x-api-key；多数兼容端点两种都认，两个都带无害
         headers["x-api-key"] = BACKEND_KEY
     if target == "anthropic":
-        # Anthropic 原生端点/中转站常校验该头
+        # Anthropic 原生端点常校验该头
         headers["anthropic-version"] = os.environ.get("PB_ANTHROPIC_VERSION",
                                                       "2023-06-01")
     req = urllib.request.Request(url, data=data, headers=headers)

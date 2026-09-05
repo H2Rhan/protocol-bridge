@@ -1,4 +1,4 @@
-"""验站脚本：验证中转站是否真正透传 Anthropic prompt caching。
+"""验站脚本：验证 Anthropic 端点是否真正透传 prompt caching。
 
 两步验证（对应方案 G1 预热链路）：
   1) 带唯一随机前缀 + cache_control 预热（max_tokens:0，被拒则降级 max_tokens:1）
@@ -13,7 +13,7 @@
 
 用法：
   set PB_API_KEY=xxx
-  python tools/verify_cache.py --base https://中转站域名 --model claude-sonnet-5
+  python tools/verify_cache.py --base https://<端点域名> --model claude-sonnet-5
   # 离线自测（先起 tools/mock_backend.py）：
   python tools/verify_cache.py --base http://127.0.0.1:9100 --model mock
 """
@@ -37,7 +37,7 @@ WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo "
 def build_prefix(n_words: int, run_id: str) -> str:
     """约 n_words 个英文词（≈n_words+ tokens），开头嵌入唯一 run_id。
 
-    唯一性保证：合租账号下别人不会撞上同一前缀（防污染），
+    唯一性保证：共享账号下别人不会撞上同一前缀（防污染），
     也不会命中本站历史残留缓存（防假阳性）。
     """
     rng = random.Random(run_id)
@@ -93,8 +93,8 @@ def usage_of(resp: dict) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="验证中转站缓存透传")
-    ap.add_argument("--base", required=True, help="中转站根地址，如 https://xxx.com")
+    ap = argparse.ArgumentParser(description="验证端点缓存透传")
+    ap.add_argument("--base", required=True, help="Anthropic 端点根地址，如 https://xxx.com")
     ap.add_argument("--model", required=True, help="模型名，如 claude-sonnet-5")
     ap.add_argument("--key", default=os.environ.get("PB_API_KEY", ""),
                     help="默认读环境变量 PB_API_KEY")
