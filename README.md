@@ -24,7 +24,7 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | **两轮代码自查（9 bug 修复 + 回归测试）** | ✅ **v1.2 新增** | 含 3 个严重项（状态层空转 / 多轮链断 / prev_id 回传），见 `docs/REVIEW.md` 第五节 |
 | 三组对照实验 | ✅ 全量实测完成 | `experiments/`（含 `rich_experiments.py` 覆盖实验 E20–E28）；结果见 `docs/experiment-results.md` |
 | TRACK04 签字确认稿 | ✅ v1.1 新增 | `docs/TRACK04_签字确认稿.md`，分工会直接签 |
-| 弹网页（本地仪表盘） | 🔜 骨架 | `src/webui/` 安全骨架 |
+| 弹网页（本地仪表盘） | ✅ 记忆编排界面 | `src/webui/` 安全骨架 + 记忆勾选/裁剪 + 缓存前缀可视化 |
 
 ## 快速开始（离线）
 
@@ -82,7 +82,7 @@ src/
   gateway/       HTTP 转发 + SSE 透传
   observability/ 命中率埋点（5 项暴露）
   warmup/        max_tokens:0 预热
-  webui/         弹网页本地仪表盘（安全骨架）
+  webui/         弹网页本地仪表盘（安全骨架 + 记忆编排界面）
 config/          session.json（Session 边界可切换配置）
 experiments/     三组对照实验 + rich_experiments.py 覆盖实验（E20–E28）
 tests/           离线单测（录制样例 + 自查回归 + 多轮链 E2E）

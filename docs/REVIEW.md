@@ -92,11 +92,11 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | ---- | --- | ---- |
 | `prewarm.py` | 80 | `build_warmup_request()`：断点打 system 不打占位消息；`validate_warmup()`（类型防御）；`parse_warmup_response()` / `is_warmup_response()`："畸形"响应单独路径 |
 
-### src/webui/ —— 弹网页（安全骨架）
+### src/webui/ —— 弹网页（安全骨架 + 记忆编排界面）
 
 | 文件 | 行数 | 功能 |
 | ---- | --- | ---- |
-| `server.py` | 88 | 本地仪表盘骨架：绑 127.0.0.1 / 随机端口 / Host 头校验 / 一次性 URL token / `_mask()` 脱敏。**功能面待补**（P2） |
+| `server.py` | 180 | 本地仪表盘：绑 127.0.0.1 / 随机端口 / Host 头校验 / 一次性 URL token / `_mask()` 脱敏 / 90s 超时兜底。**v1.3 补齐编排界面**：记忆勾选/裁剪（`save_callback` 回写状态层）+ 缓存前缀可视化（4 断点布局） |
 
 ### experiments/ —— 实验层
 
@@ -176,7 +176,7 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | # | 缺口 | 影响 | 计划 |
 | - | ---- | ---- | ---- |
 | 1 | **SSE 是假透传**：整个响应读完再处理，不是逐块流式 | 流式体验与首 token 延迟 | P2 |
-| 2 | webui 只有安全骨架，无实际编排界面 | 方案 3.7 弹网页承诺未兑现 | P2 |
+| 2 | ~~webui 只有安全骨架，无实际编排界面~~ | 方案 3.7 弹网页承诺未兑现 | ✅ v1.3 已补：记忆勾选/裁剪 + 缓存前缀可视化 + `save_callback` 回写 |
 | 3 | replayed/injected 按**字符数**统计，非 token | 埋点数值偏大但趋势可用 | 接 `count_tokens` 校准 |
 | 4 | 网关无鉴权（绑 127.0.0.1 兜底）；管理口 `/v1/admin/*` 同样无鉴权 | 仅本地用安全；暴露到网络即风险 | 交付文档声明 + 需要时加 token |
 | 5 | 三组实验无真实数据 | ✅ 已补：exp1–19 + 覆盖实验 E20–E28 全量实测，量化取舍文档见 `docs/experiment-results.md` | 已闭环 |
