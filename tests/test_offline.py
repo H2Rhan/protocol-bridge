@@ -19,6 +19,7 @@ from src.adapters.base import Dropped, assistant_from_upstream
 from src.adapters.chat import ChatAdapter, usage_from_chat
 from src.adapters.anthropic import AnthropicAdapter, usage_from_anthropic
 from src.adapters.response import ResponseAdapter
+from src.gateway.sse import AnthropicToChatStream, parse_sse_lines
 from src.ir import model as ir
 from src.state.session_config import (SessionConfig, build_prefix, load,
                                       FULL, LAST_BREAKPOINT, SLIDING_WINDOW)
@@ -831,6 +832,148 @@ def _count_breakpoints(payload: dict) -> int:
         for b in m.get("content", []):
             n += "cache_control" in b
     return n
+
+
+class TestSseConversion(unittest.TestCase):
+    """LIMITATIONS #1 最小闭环：Anthropic SSE → Chat chunk 逐块转换。"""
+
+    @staticmethod
+    def _feed_seq(conv, events):
+        """按序喂事件，把每事件产出的帧全部收集。"""
+        frames = []
+        for ev in events:
+            frames.extend(conv.feed(ev.get("type"), ev))
+        return frames
+
+    @staticmethod
+    def _parse_frame(frame: str):
+        assert frame.startswith("data: ") and frame.endswith("\n\n")
+        return json.loads(frame[len("data:"):].strip())
+
+    def test_parse_sse_lines_basic(self):
+        raw = (
+            'event: message_start\n'
+            'data: {"type":"message_start","message":{"id":"msg_1"}}\n'
+            '\n'
+            ': heartbeat-comment\n'
+            'data: {"type":"ping"}\n'
+            '\n'
+            'data: 非JSON行\n'
+            '\n'
+        ).encode("utf-8")
+        events = list(parse_sse_lines(iter(raw.splitlines(keepends=True))))
+        self.assertEqual(len(events), 3)
+        self.assertEqual(events[0], ("message_start",
+                                     {"type": "message_start",
+                                      "message": {"id": "msg_1"}}))
+        self.assertEqual(events[1][1], {"type": "ping"})   # 注释行被跳过
+        self.assertEqual(events[2][1], "非JSON行")          # 非 JSON 原样透传
+
+    def test_parse_sse_lines_partial_tail_dropped(self):
+        raw = b'data: {"type":"message_stop"}\n\ndata: {"type":"truncat'
+        events = list(parse_sse_lines(iter(raw.splitlines(keepends=True))))
+        self.assertEqual(len(events), 1)  # 尾部半帧容错丢弃，不崩
+
+    def test_text_delta_streams_immediately(self):
+        conv = AnthropicToChatStream()
+        frames = self._feed_seq(conv, [
+            {"type": "message_start", "message": {
+                "id": "msg_x", "model": "claude-mock",
+                "usage": {"input_tokens": 100, "cache_read_input_tokens": 80}}},
+            {"type": "content_block_delta", "index": 0,
+             "delta": {"type": "text_delta", "text": "你"}},
+            {"type": "content_block_delta", "index": 0,
+             "delta": {"type": "text_delta", "text": "好"}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+             "usage": {"output_tokens": 7}},
+            {"type": "message_stop"},
+        ])
+        # role + 2 文本帧 + finish + DONE：文本逐块即时下发，不等流尾
+        self.assertEqual(len(frames), 5)
+        first = self._parse_frame(frames[0])
+        self.assertEqual(first["choices"][0]["delta"], {"role": "assistant"})
+        self.assertEqual(first["id"], "msg_x")
+        self.assertEqual(first["model"], "claude-mock")
+        self.assertEqual(first["object"], "chat.completion.chunk")
+        texts = [self._parse_frame(f)["choices"][0]["delta"].get("content", "")
+                 for f in frames[1:3]]
+        self.assertEqual("".join(texts), "你好")
+        fin = self._parse_frame(frames[3])
+        self.assertEqual(fin["choices"][0]["finish_reason"], "stop")
+        self.assertEqual(frames[4], "data: [DONE]\n\n")
+
+    def test_tool_args_buffered_until_block_stop(self):
+        """input_json_delta 是非完整 JSON 片段：缓冲到 content_block_stop 一次性发。"""
+        conv = AnthropicToChatStream()
+        f1 = conv.feed("content_block_start",
+                       {"type": "content_block_start", "index": 1,
+                        "content_block": {"type": "tool_use",
+                                          "id": "toolu_1", "name": "get_weather"}})
+        self.assertEqual(f1, [])  # 工具块开始不落帧
+        f2 = conv.feed("content_block_delta",
+                       {"type": "content_block_delta", "index": 1,
+                        "delta": {"type": "input_json_delta",
+                                  "partial_json": '{"city": "天'}})
+        f3 = conv.feed("content_block_delta",
+                       {"type": "content_block_delta", "index": 1,
+                        "delta": {"type": "input_json_delta",
+                                  "partial_json": '津"}'}})
+        self.assertEqual(f2 + f3, [])  # 参数片段期间不落帧（无法回避的折损）
+        f4 = conv.feed("content_block_stop",
+                       {"type": "content_block_stop", "index": 1})
+        self.assertEqual(len(f4), 1)
+        chunk = self._parse_frame(f4[0])
+        tc = chunk["choices"][0]["delta"]["tool_calls"][0]
+        self.assertEqual(tc["id"], "toolu_1")
+        self.assertEqual(tc["function"]["name"], "get_weather")
+        self.assertEqual(tc["function"]["arguments"], '{"city": "天津"}')
+        # 落库原料：工具参数被解析回 dict
+        synth = conv.synthetic_response()
+        tool_blocks = [b for b in synth["content"] if b["type"] == "tool_use"]
+        self.assertEqual(tool_blocks[0]["input"], {"city": "天津"})
+
+    def test_stop_reason_mapping(self):
+        for anthropic_reason, chat_reason in (
+                ("end_turn", "stop"), ("max_tokens", "length"),
+                ("tool_use", "tool_calls")):
+            conv = AnthropicToChatStream()
+            frames = conv.feed("message_delta",
+                               {"type": "message_delta",
+                                "delta": {"stop_reason": anthropic_reason},
+                                "usage": {"output_tokens": 3}})
+            chunk = self._parse_frame(frames[0])
+            self.assertEqual(chunk["choices"][0]["finish_reason"], chat_reason)
+
+    def test_usage_merge_and_history_reuse(self):
+        """usage 分次到达（start 带 input+缓存、delta 带 output），流尾合并；
+        synthetic_response 直接复用 assistant_from_upstream 落库。"""
+        conv = AnthropicToChatStream()
+        self._feed_seq(conv, [
+            {"type": "message_start", "message": {
+                "id": "msg_u", "model": "m",
+                "usage": {"input_tokens": 5978,
+                          "cache_creation_input_tokens": 5978,
+                          "cache_read_input_tokens": 0}}},
+            {"type": "content_block_delta", "index": 0,
+             "delta": {"type": "text_delta", "text": "答复"}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+             "usage": {"output_tokens": 12}},
+        ])
+        u = usage_from_anthropic(conv.usage())
+        self.assertEqual(u.input_tokens, 5978)
+        self.assertEqual(u.cache_creation_input_tokens, 5978)
+        self.assertEqual(u.output_tokens, 12)
+        reply = assistant_from_upstream("anthropic", conv.synthetic_response())
+        self.assertIsNotNone(reply)
+        self.assertEqual(reply.blocks[0].text, "答复")
+
+    def test_upstream_error_frame(self):
+        conv = AnthropicToChatStream()
+        frames = conv.feed("error", {"type": "error", "error": {
+            "type": "overloaded_error", "message": "Overloaded"}})
+        chunk = self._parse_frame(frames[0])
+        self.assertIn("Overloaded",
+                      chunk["choices"][0]["delta"].get("content", ""))
 
 
 if __name__ == "__main__":

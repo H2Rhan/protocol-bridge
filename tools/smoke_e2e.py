@@ -81,6 +81,25 @@ def post(path: str, payload: dict) -> dict:
         return json.loads(r.read().decode("utf-8"))
 
 
+def post_stream(path: str, payload: dict):
+    """流式 POST：逐帧收 SSE，返回 (data 帧列表, 各帧到达时间列表)。
+
+    到达时间用来证明网关是**逐块下发**而非整读后再吐（LIMITATIONS #1 的核心断言）。
+    """
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"http://127.0.0.1:{GW_PORT}{path}", data=data,
+                                 headers={"Content-Type": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    frames, times = [], []
+    with opener.open(req, timeout=20) as r:
+        for line in r:
+            line = line.decode("utf-8").strip()
+            if line.startswith("data:"):
+                frames.append(line[len("data:"):].strip())
+                times.append(time.time())
+    return frames, times
+
+
 CHECKS: list = []
 
 
@@ -150,6 +169,44 @@ def main() -> int:
             check("未知 target 回 400", e.code == 400, f"HTTP {e.code}")
         except Exception as e:  # RemoteDisconnected 等
             check("未知 target 回 400", False, f"{type(e).__name__}: {e}")
+
+        print("\n6) SSE 逐块流式（openai_chat 客户端 ← anthropic 上游，LIMITATIONS #1）")
+        frames, times = post_stream("/v1/openai_chat/to/anthropic",
+                                    {"model": "mock", "stream": True,
+                                     "messages": [{"role": "user", "content": "hi"}]})
+        chunks = []
+        for f in frames:
+            if f == "[DONE]":
+                continue
+            try:
+                chunks.append(json.loads(f))
+            except ValueError:
+                pass
+        check("收到多帧而非一整块", len(frames) >= 5, f"frames={len(frames)}")
+        check("首帧是 role 帧",
+              bool(chunks) and chunks[0]["choices"][0]["delta"].get("role") == "assistant",
+              frames[0][:80] if frames else "无帧")
+        text = "".join(c["choices"][0]["delta"].get("content", "")
+                       for c in chunks)
+        check("delta 文本拼合完整", text == "mock stream reply", repr(text))
+        check("有 finish_reason=stop 帧",
+              any(c["choices"][0].get("finish_reason") == "stop" for c in chunks))
+        check("以 [DONE] 收尾", bool(frames) and frames[-1] == "[DONE]",
+              frames[-1][:40] if frames else "无帧")
+        # mock 每 chunk 间隔 10ms——若网关整读再吐，首尾帧会几乎同时到达
+        spread = (times[-1] - times[0]) if len(times) >= 2 else 0
+        check("帧是逐块到达的（非整读后补吐）", spread >= 0.015,
+              f"首尾间隔 {spread*1000:.1f}ms")
+        # 流尾落库与埋点：metrics 最后一行应是本轮流式请求
+        # （TurnMetrics 口径为 5 项暴露，不含 output_tokens——断言 kind 与 input）
+        try:
+            with open(os.path.join(tmp, "m.jsonl"), encoding="utf-8") as fh:
+                last = json.loads(fh.readlines()[-1])
+            check("流式轮照常进埋点",
+                  last.get("kind") == "normal" and last.get("input_tokens", 0) > 0,
+                  json.dumps(last, ensure_ascii=False)[:120])
+        except Exception as e:
+            check("流式轮照常进埋点", False, f"{type(e).__name__}: {e}")
     finally:
         stop(tmp)
 

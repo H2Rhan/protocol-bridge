@@ -158,9 +158,39 @@ def payload_response(payload: dict, path: str) -> dict:
     return anthropic_response(payload)
 
 
-def sse_lines(payload: dict):
-    chunks = ["mock ", "stream ", "reply"]
-    for c in chunks:
+def sse_lines(payload: dict, path: str):
+    """流式响应。Anthropic 路径发**完整官方事件序列**（message_start →
+    content_block_* → message_delta → message_stop，带 usage 与缓存字段），
+    供网关 SSE 逐块转换的离线测试；其他路径发简化序列。"""
+    if path.rstrip("/").endswith("/v1/messages") or path.endswith("/messages"):
+        creation, read = _cache_tick(payload)
+        chunks = ["mock ", "stream ", "reply"]
+        msg_start = {"type": "message_start", "message": {
+            "id": "msg_mock_stream", "type": "message", "role": "assistant",
+            "model": payload.get("model", "mock"), "content": [],
+            "usage": {"input_tokens": _input_chars(payload), "output_tokens": 1,
+                      "cache_creation_input_tokens": creation,
+                      "cache_read_input_tokens": read}}}
+        yield "event: message_start\n"
+        yield f"data: {json.dumps(msg_start, ensure_ascii=False)}\n\n"
+        yield "event: content_block_start\n"
+        yield ('data: {"type":"content_block_start","index":0,'
+               '"content_block":{"type":"text","text":""}}\n\n')
+        for c in chunks:
+            delta = {"type": "content_block_delta", "index": 0,
+                     "delta": {"type": "text_delta", "text": c}}
+            yield "event: content_block_delta\n"
+            yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
+            time.sleep(0.01)
+        yield "event: content_block_stop\n"
+        yield 'data: {"type":"content_block_stop","index":0}\n\n'
+        yield "event: message_delta\n"
+        yield ('data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+               '"usage":{"output_tokens":12}}\n\n')
+        yield "event: message_stop\n"
+        yield 'data: {"type":"message_stop"}\n\n'
+        return
+    for c in ["mock ", "stream ", "reply"]:
         yield f"data: {json.dumps({'type': 'content_block_delta', 'delta': {'type': 'text_delta', 'text': c}})}\n\n"
         time.sleep(0.01)
     yield 'data: {"type": "message_stop"}\n\n'
@@ -177,7 +207,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            for line in sse_lines(payload):
+            for line in sse_lines(payload, self.path):
                 self.wfile.write(line.encode("utf-8"))
             return
         body = json.dumps(payload_response(payload, self.path),

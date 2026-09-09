@@ -6,7 +6,9 @@
 
 ## 一、协议转换链路
 
-### #1 SSE 逐块流式转换未实现（整读透传）
+### #1 SSE 逐块流式转换（v1.6 部分闭环：chat 客户端 ← anthropic 上游）
+
+> ◐ **v1.6 部分闭环**（2026-09-09）：`openai_chat` 客户端 ← `anthropic` 上游方向已实现**逐块流式**——`src/gateway/sse.py` 把 Anthropic 事件逐块翻成 Chat chunk 即时下发（冒烟实测首尾帧间隔 30.7ms，证明非整读补吐）；text_delta 即时下发、工具参数按既定折损缓冲到 `content_block_stop`、usage 流尾合并后照常进 5 项埋点、历史落库复用 `assistant_from_upstream`（流式与非流式同一路径）。回归测试 `TestSseConversion` 7 项 + 冒烟第 6 组 7 项。**仍为整读透传的方向**：chat←chat、response 源、anthropic 客户端；流式轮的 dropped 清单对客户端不可见（SSE 帧无其位置，埋点中 degradation 仍如实记录）。以下原文留档，未闭环范围以四要素为准。
 
 - **影响半径**：流式体验与首 token 延迟（TTFB）。功能正确性不受影响——响应内容完整、usage 归一与埋点照常工作。
 - **触发条件**：客户端请求 `stream:true` 经过网关。当前网关 `post_json` 整读响应后一次性返回；跨协议的事件模型转换（Chat `delta` / Responses 三维寻址 / Anthropic 块生命周期）未实现。
