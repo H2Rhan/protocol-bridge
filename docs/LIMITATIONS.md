@@ -86,12 +86,16 @@
 
 ### #11 TTL 淘汰无后台触发器
 
+> ✅ **v1.5 已修复**（2026-09-09）：新增 `SessionStore.maybe_evict()` 惰性淘汰——读写路径（`get_or_create`）顺手触发，按 `_EVICT_INTERVAL`（60s）节流避免每请求全表扫描，无需后台线程；在锁外调用规避非可重入锁死锁。回归测试 `test_lazy_eviction_throttled`（节流窗口）/ `test_get_or_create_triggers_lazy_eviction`（流量驱动）。以下原文留档。
+
 - **影响半径**：`evict_expired` 已实现且测试覆盖，但网关主进程没有定时调用——会话表随运行时间无界增长（`replay_from=full` 时每轮全量重放，长对话重放代价线性增长）。
 - **触发条件**：长时间运行的网关进程。
 - **绕过方式**：重启进程不丢会话（SQLite 持久化），可定期人工调用淘汰；实验场景会话数受控。
 - **后续路线**：网关加定时清扫（或惰性淘汰：读写时顺手淘汰）；生产形态需配合 `sliding_window` 重放策略 cap 历史。
 
 ### #12 往返一致性为例举式测试（非 property-based），有损清单待自动生成
+
+> ✅ **已闭环**（2026-09-09，PR #8）：`TestPropertyRoundTrip` 以 stdlib 实现 property-based 往返测试（440 随机用例、固定种子可复现，断言断点恒在 [3,4] / 未知字段必降级 / 工具参数守恒 / signature 守恒四条性质）；`docs/lossy-fields.md` 已从三个 adapter 实码推导生成（含两处诚实标注的清单盲区）。以下原文留档。
 
 - **影响半径**：`TestAdapterRoundTrip` 覆盖录制样例的代表性路径，不做随机化性质测试；已知有损字段清单当前依赖运行时 dropped 记录，无独立文档。
 - **触发条件**：边缘字段组合（罕见的块类型/参数搭配）。

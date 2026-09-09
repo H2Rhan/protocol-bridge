@@ -33,13 +33,13 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | 三组对照实验 | ✅ 34 组全量实测 | `docs/experiment-results.md`（含第〇节证伪条件预登记） |
 | TRACK04 边界参数对齐稿 | ✅ 已对齐 | `docs/TRACK04_签字确认稿.md`（single_task 等三参数已定稿） |
 | 弹网页（本地仪表盘） | ✅ 记忆编排界面 | `src/webui/` 安全骨架 + 记忆勾选/裁剪 + 缓存前缀可视化 |
-| 已知限制（边界自觉） | 📋 12 项四要素 | `docs/LIMITATIONS.md`（含结论隔离证明） |
+| 已知限制（边界自觉） | 📋 12 项四要素（3 项已闭环留档） | `docs/LIMITATIONS.md`（含结论隔离证明） |
 
 ## 快速开始（离线）
 
 ```bash
 # 零外部依赖（仅标准库），Python 3.11+
-python -m unittest tests.test_offline -v   # 40 项离线单测：IR 往返 / adapter / 状态层 / 预热 / 三轮自查回归 / 多轮链 E2E / ID 映射
+python -m unittest tests.test_offline -v   # 46 项离线单测：IR 往返 / adapter / 状态层 / 预热 / 三轮自查回归 / 多轮链 E2E / ID 映射 / property-based / 惰性淘汰
 python tools/smoke_e2e.py                  # 11 项端到端冒烟：真起 mock+网关子进程，5 组链路断言
 python tools/mock_backend.py               # 起 mock backend（127.0.0.1:9100，按端点返回三种协议形状）
 python -m src.gateway.server               # 起网关（转发到 mock）
