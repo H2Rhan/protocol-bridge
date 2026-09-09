@@ -196,8 +196,7 @@ def convert(source: str, target: str, payload: dict, headers: dict):
     return out, req, dropped, session, injected, replayed
 
 
-def post_json(url: str, payload: dict, target: str = "") -> dict:
-    data = json.dumps(payload).encode("utf-8")
+def _backend_headers(target: str = "") -> dict:
     headers = {
         "Content-Type": "application/json",
         # 部分真实网关（如 Cloudflare 前置）按 UA 拦 bot，带浏览器 UA 更稳
@@ -212,12 +211,77 @@ def post_json(url: str, payload: dict, target: str = "") -> dict:
         # Anthropic 原生端点常校验该头
         headers["anthropic-version"] = os.environ.get("PB_ANTHROPIC_VERSION",
                                                       "2023-06-01")
-    req = urllib.request.Request(url, data=data, headers=headers)
+    return headers
+
+
+def _backend_opener():
     # PB_DIRECT=1 时绕过系统代理（本地代理隧道对长 POST 可能 502）
-    opener = (urllib.request.build_opener(urllib.request.ProxyHandler({}))
-              if DIRECT else urllib.request.build_opener())
-    with opener.open(req, timeout=60) as resp:
+    return (urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            if DIRECT else urllib.request.build_opener())
+
+
+def post_json(url: str, payload: dict, target: str = "") -> dict:
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=_backend_headers(target))
+    with _backend_opener().open(req, timeout=60) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def open_stream(url: str, payload: dict, target: str = ""):
+    """以流式方式打开上游连接，返回可**逐行迭代**的响应对象（调用方负责关闭）。
+
+    urllib 响应对象本身就是行迭代器，且行随上游到达即时吐出（已实测验证），
+    这是逐块流式转发的实现基础。
+    """
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=_backend_headers(target))
+    return _backend_opener().open(req, timeout=60)
+
+
+def finalize_turn(target: str, backend_resp: dict, req, dropped, session,
+                  replayed_hist: list, warmup: bool) -> str | None:
+    """流尾共用逻辑（非流式响应与 SSE 流式同一条路径）：
+    usage 归一 + 命中率埋点 + 本轮历史落库 + 登记响应 id。
+
+    流式场景传入的 backend_resp 是 sse.AnthropicToChatStream.synthetic_response()
+    拼出的 Anthropic 非流式形状——两条路径语义一致，不另造埋点口径。
+    """
+    # 归一 usage + 命中率埋点（真实字段由真实 API 返回；mock 时为占位值）
+    usage = _usage_for(target, backend_resp)
+    # 重放代价只算真正重放的历史切片，不含本轮新消息
+    replayed_chars = sum(len(b.text or "")
+                         for m in replayed_hist for b in m.blocks)
+    # 按 extra 标记统计（而非按尾部切片），注入块位置变化时依然准确
+    injected_chars = sum(len(b.text or "") for b in req.system
+                         if b.extra.get("injected_memory"))
+    METRICS.record_turn(usage, injected=injected_chars, replayed=replayed_chars,
+                        dropped=dropped.items,
+                        degradation="explicit" if dropped else "none",
+                        kind=WARMUP if warmup else NORMAL)
+
+    # 有状态：登记响应供下一轮 previous_response_id 引用。
+    # 预热轮不登记——它不产出可引用的对话轮，登记会污染响应链。
+    rid = None
+    if session is not None and not warmup:
+        # 本轮对话必须落进会话历史，否则下一轮 previous_response_id 重放出的是空列表，
+        # 整个状态层等于空转（历史永远是空 -> 重放永远是空 -> 多轮链路第一轮就断）。
+        # 只追加本轮新消息：重放切片已在历史里，再加一次会自我复制。
+        new_turn = list(req.messages[len(replayed_hist):])
+        reply = assistant_from_upstream(target, backend_resp)
+        if reply is not None:
+            new_turn.append(reply)
+        if new_turn:
+            # 落库前把 ID 翻回 canonical：new_turn 里的 ID 刚被 outgoing
+            # 翻成目标协议形式，reply 里的是上游新生成的——历史必须存
+            # canonical，否则跨协议续轮时映射链会退化。
+            idm = STORE.idmap
+            for m in new_turn:
+                for b in m.blocks:
+                    if b.kind in (ir.TOOL_USE, ir.TOOL_RESULT) and b.tool_id:
+                        b.tool_id = idm.incoming(session.key, b.tool_id, target)
+            STORE.append(session, new_turn)
+        rid = STORE.record_response(session)
+    return rid
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -274,6 +338,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": {"message": werr,
                                                   "type": "invalid_request_error"}})
 
+        # SSE 逐块流式（LIMITATIONS #1 最小闭环）：仅 chat 客户端 ← anthropic 上游。
+        # 其余方向保持整读透传。warmup+stream 已在上方被 validate_warmup 拦截，
+        # 走到这里的一定不是预热轮。
+        if out.get("stream") and source == "openai_chat" and target == "anthropic":
+            return self._stream_from_anthropic(out, req, dropped, session,
+                                               replayed_hist)
+
         # mock 与真实后端走同一套端点映射。tools/mock_backend.py 已按端点路径
         # 返回对应协议形状，不再为 mock 特判——否则离线跑的和上线跑的不是同一条路径，
         # 上线时才暴露的问题离线永远测不出来。
@@ -292,41 +363,8 @@ class Handler(BaseHTTPRequestHandler):
                     "error": {"message": f"backend unreachable: {e}",
                               "type": "upstream_error"}})
 
-        # 归一 usage + 命中率埋点（真实字段由真实 API 返回；mock 时为占位值）
-        usage = _usage_for(target, backend_resp)
-        # 重放代价只算真正重放的历史切片，不含本轮新消息
-        replayed_chars = sum(len(b.text or "")
-                             for m in replayed_hist for b in m.blocks)
-        # 按 extra 标记统计（而非按尾部切片），注入块位置变化时依然准确
-        injected_chars = sum(len(b.text or "") for b in req.system
-                             if b.extra.get("injected_memory"))
-        METRICS.record_turn(usage, injected=injected_chars, replayed=replayed_chars,
-                            dropped=dropped.items,
-                            degradation="explicit" if dropped else "none",
-                            kind=WARMUP if warmup else NORMAL)
-
-        # 有状态：登记响应供下一轮 previous_response_id 引用。
-        # 预热轮不登记——它不产出可引用的对话轮，登记会污染响应链。
-        rid = None
-        if session is not None and not warmup:
-            # 本轮对话必须落进会话历史，否则下一轮 previous_response_id 重放出的是空列表，
-            # 整个状态层等于空转（历史永远是空 -> 重放永远是空 -> 多轮链路第一轮就断）。
-            # 只追加本轮新消息：重放切片已在历史里，再加一次会自我复制。
-            new_turn = list(req.messages[len(replayed_hist):])
-            reply = assistant_from_upstream(target, backend_resp)
-            if reply is not None:
-                new_turn.append(reply)
-            if new_turn:
-                # 落库前把 ID 翻回 canonical：new_turn 里的 ID 刚被 outgoing
-                # 翻成目标协议形式，reply 里的是上游新生成的——历史必须存
-                # canonical，否则跨协议续轮时映射链会退化。
-                idm = STORE.idmap
-                for m in new_turn:
-                    for b in m.blocks:
-                        if b.kind in (ir.TOOL_USE, ir.TOOL_RESULT) and b.tool_id:
-                            b.tool_id = idm.incoming(session.key, b.tool_id, target)
-                STORE.append(session, new_turn)
-            rid = STORE.record_response(session)
+        rid = finalize_turn(target, backend_resp, req, dropped, session,
+                            replayed_hist, warmup)
 
         body = dict(backend_resp)
         # 客户端说 Responses 协议时，下一轮会带 previous_response_id 回来。
@@ -341,6 +379,54 @@ class Handler(BaseHTTPRequestHandler):
                            "warmup": warmup,
                            "replayed_messages": len(replayed_hist)}
         self._json(200, body)
+
+    def _stream_from_anthropic(self, out: dict, req, dropped, session,
+                               replayed_hist: list):
+        """SSE 逐块流式：Anthropic 上游事件 → Chat chunk 帧即时下发。
+
+        与非流式的差别只在传输段：转换（to_ir/from_ir）、限流、usage 归一、
+        埋点、历史落库全部复用同一条路径（finalize_turn + synthetic_response）。
+        """
+        from .sse import AnthropicToChatStream, parse_sse_lines
+
+        path = BACKEND_PATH["anthropic"]
+        with _GATE:  # 限流：流式请求同样占并发名额
+            try:
+                resp = open_stream(BACKEND_URL + path, out, "anthropic")
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", "replace")[:500]
+                return self._json(int(e.code), {
+                    "error": {"message": "backend error", "type": "upstream_error",
+                              "status": int(e.code), "detail": detail}})
+            except Exception as e:
+                return self._json(502, {
+                    "error": {"message": f"backend unreachable: {e}",
+                              "type": "upstream_error"}})
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+            conv = AnthropicToChatStream()
+            try:
+                for event, data in parse_sse_lines(resp):
+                    for frame in conv.feed(event, data):
+                        self.wfile.write(frame.encode("utf-8"))
+                        self.wfile.flush()
+            except (ConnectionError, BrokenPipeError, OSError):
+                # 客户端中途断开：流尾落库/埋点照常（这轮 API 费用已实际发生）
+                pass
+            finally:
+                resp.close()
+
+        # 流尾：与非流式同一套 usage 归一 + 埋点 + 历史落库。
+        # dropped 清单对流式客户端不可见（SSE 帧里没有它的位置）——
+        # 已写进 LIMITATIONS #1 的范围说明，埋点里 degradation 仍如实记录。
+        finalize_turn("anthropic", conv.synthetic_response(), req, dropped,
+                      session, replayed_hist, warmup=False)
 
 
 def _usage_for(target: str, resp: dict) -> ir.IRUsage:

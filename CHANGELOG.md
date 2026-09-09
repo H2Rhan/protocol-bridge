@@ -59,3 +59,12 @@
 - **实验原始数据入库**：`data/experiments/` 19 个文件（34 组实测逐轮 jsonl + 汇总 csv）+ `data/README.md` 溯源表——实验文档每个数字可回查到具体文件具体行；`.gitignore` 改为只忽略运行时产物、放行精选数据目录
 - LIMITATIONS #12 补标已闭环（property-based + lossy-fields 已于 PR #8 落地，原标记滞后）
 - README：目录补 data/、已知限制行标注 3 项已闭环、单测数 40 → 46；REVIEW.md 测试口径统一为 46 项
+
+## 2026-09-09 · v1.6 SSE 逐块流式（LIMITATIONS #1 部分闭环，本提交）
+
+- **`src/gateway/sse.py`**：`openai_chat` 客户端 ← `anthropic` 上游方向的逐块流式转换。text_delta 即时翻成 Chat chunk 下发（首 token 延迟与直连一致）；`input_json_delta` 按既定折损缓冲到 `content_block_stop` 一次性发（非完整 JSON 片段无法流式透传）；usage 在 message_start/message_delta 分次到达、流尾合并照常进 5 项埋点；`synthetic_response()` 复用 `assistant_from_upstream`——流式与非流式落库/埋点同一条代码路径，不另造语义
+- 网关：抽 `_backend_headers` / `_backend_opener` / `open_stream`，do_POST 尾部逻辑收敛为 `finalize_turn()`（非流式与流式共用）；流式请求同样占 `_GATE` 并发名额
+- 设计验证：urllib 响应对象按行增量吐数据（实测逐行到达），无需引入第三方 SSE 库，保持零依赖
+- mock：Anthropic 路径发完整官方事件序列（message_start 带 usage 与缓存字段 → content_block_* → message_delta → message_stop）
+- 测试：`TestSseConversion` 7 项单测（分帧容错 / 即时下发 / 参数缓冲 / stop_reason 映射 / usage 合并 / 错误帧）；冒烟第 6 组 7 项（**实测首尾帧间隔 30.7ms，证明逐块到达非整读补吐** + 流式轮照常进埋点）。53 项单测 + 18 项冒烟全过
+- 文档：LIMITATIONS #1 标「部分闭环」（其余方向与 dropped 可见性写明）；README SSE 行与测试口径同步；REVIEW 网关文件清单补 sse.py

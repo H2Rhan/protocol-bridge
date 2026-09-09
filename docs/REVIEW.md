@@ -1,7 +1,7 @@
 # 代码评审材料（Code Review Pack）
 
 > 版本 v1.2（2026-09-02）｜ src 1493 行 + tools/experiments/tests 1065 行（纯标准库，零第三方依赖，Python 3.11+）
-> 测试：**46 项单测全过 + 11 项端到端冒烟全过**（2026-09-09，含第三轮自查回归 + property-based 性质测试 + 惰性淘汰回归）+ Groq 真实链路验证通过（2026-09-01）
+> 测试：**53 项单测全过 + 18 项端到端冒烟全过**（2026-09-09，含第三轮自查回归 + property-based 性质测试 + 惰性淘汰回归 + SSE 逐块转换）+ Groq 真实链路验证通过（2026-09-01）
 > 本版差异：**两轮代码自查发现 9 个真实 bug，全部修复并各配回归测试**（见第六节）
 
 ## 一、整体架构（IR 星型）
@@ -66,6 +66,7 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | 文件 | 行数 | 功能 |
 | ---- | --- | ---- |
 | `server.py` | 363 | 见下方「网关关键函数」 |
+| `sse.py` | 150 | **v1.6 新增**：SSE 逐块流式转换（chat 客户端 ← anthropic 上游）。`parse_sse_lines` 行流分帧；`AnthropicToChatStream` 事件→Chat chunk：text_delta 即时下发、工具参数缓冲到 content_block_stop（既定折损）、usage 流尾合并、`synthetic_response()` 复用 `assistant_from_upstream` 落库 |
 
 **网关关键函数**：
 
@@ -110,9 +111,9 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | ---- | --- | ---- |
 | `mock_backend.py` | 194 | 离线顶替真实端点。**v1.2 按端点路径返回三种协议各自形状**（/v1/messages、/responses、/chat/completions），mock 与真实后端走同一条转发路径；有状态缓存模拟（前缀哈希记账）；支持 `max_tokens:0` 预热形态与 SSE |
 | `verify_cache.py` | 152 | **验站脚本**：唯一随机 run_id 前缀两步验证（预热看 creation → 复发看 read）；PASS/PARTIAL/FAIL；`max_tokens:0` 被拒自动降级 1 |
-| `smoke_e2e.py` | 164 | **v1.2 新增**：端到端冒烟——真起 mock + 网关两个子进程，跑 5 组 11 项断言（直通/跨协议/多轮链/预热/非法路由），退出码 0/1 |
+| `smoke_e2e.py` | 220 | 端到端冒烟——真起 mock + 网关两个子进程，跑 6 组 18 项断言（直通/跨协议/多轮链/预热/非法路由/**SSE 逐块流式**），退出码 0/1 |
 
-### tests/ —— 测试（46 项全过）
+### tests/ —— 测试（53 项全过）
 
 | 测试类 | 覆盖 |
 | ------ | ---- |
@@ -128,13 +129,14 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | `TestToolIdMap` | **v1.4 新增**：工具 ID 双向映射（含 Anthropic→Chat→Anthropic 还原、并发分叉不串号） |
 | `TestAssistantFromUpstream` | **v1.4 新增**：状态层重放保留 thinking / tool_use 结构化块 |
 | `TestPropertyRoundTrip` | **v1.4 新增**：property-based 往返（440 随机用例、固定种子可复现）：断点恒在 [3,4] / 未知字段必降级 / 工具参数守恒 / signature 守恒 |
+| `TestSseConversion` | **v1.6 新增**（7 项）：SSE 分帧（注释行/半帧容错）、text_delta 即时下发、工具参数缓冲到块结束、stop_reason 映射、usage 流尾合并 + 落库复用、上游错误帧 |
 
 ## 四、已验证记录
 
 | 验证 | 结果 | 日期 |
 | ---- | ---- | ---- |
-| 46 项单测（`-W error::ResourceWarning` 下零警告，含第三轮自查回归 + property-based + 惰性淘汰） | ✅ 全过 | 2026-09-09 |
-| 11 项端到端冒烟（子进程级，`tools/smoke_e2e.py`） | ✅ 全过 | 2026-09-02 |
+| 53 项单测（`-W error::ResourceWarning` 下零警告，含第三轮自查回归 + property-based + 惰性淘汰 + SSE 转换） | ✅ 全过 | 2026-09-09 |
+| 18 项端到端冒烟（子进程级，`tools/smoke_e2e.py`，含 SSE 逐块到达实测 30.7ms） | ✅ 全过 | 2026-09-09 |
 | 多轮 previous_response_id 链路（0→2→4 条重放） | ✅ 修复后通过 | 2026-09-02 |
 | Groq 真实链路（Chat 直通 + Responses→Chat + usage 归一 + 埋点） | ✅ | 2026-09-01 |
 | 实验框架 dry-run | ✅ | 2026-09-02 |
