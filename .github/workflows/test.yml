@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  unittest:
+  unittest-python:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -18,9 +18,36 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       # 零第三方依赖（纯标准库），无需 pip install
-      - name: 离线单测（44 项）
+      - name: 离线单测（56 项）
         run: python -m unittest tests.test_offline
-      - name: 端到端冒烟（11 项，子进程级）
+      - name: 端到端冒烟（25 项，子进程级）
         run: python tools/smoke_e2e.py
       - name: 实验框架 dry-run
         run: python experiments/run_experiments.py --dry-run
+
+  unittest-ts:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+      # TS 移植版：运行零第三方依赖（Node 22 类型擦除 + node:sqlite）
+      - name: 安装开发依赖（typescript）
+        run: npm ci
+        working-directory: ts
+      - name: 类型检查（strict + erasableSyntaxOnly）
+        run: npm run typecheck
+        working-directory: ts
+      - name: 离线单测（56 项）
+        run: npm test
+        working-directory: ts
+      - name: 端到端冒烟（25 项，子进程级）
+        run: npm run smoke
+        working-directory: ts
