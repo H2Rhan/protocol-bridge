@@ -5,10 +5,10 @@
 OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 + 独立状态层）。
 本仓库按「可移植标准」编写，主线在自仓库迭代，之后可拆出提上游。
 
-> 交付节奏：截止 **2026-09-14**。当前为**离线骨架阶段**——
-> 所有依赖真实 API（Anthropic / OpenAI）的实验**挂起等额度**，先用录制样例 + mock backend 把链路打通。
+> 交付节奏：截止 **2026-09-14**。骨架与真实 API 实验均已闭环——
+> 缓存命中率实测（19 组对照 + 覆盖实验 E20–E28）已完成，量化取舍结论见 `docs/experiment-results.md`。
 
-## 当前状态（API 挂起，先跑骨架）
+## 当前状态
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -22,7 +22,7 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | 命中率埋点（5 项暴露） | ✅ 框架 | injected 字段 v1.1 起真实统计；v1.2 起预热轮单列、多线程写加锁 |
 | max_tokens:0 预热路径 | ✅ 字段处理 | 用录制响应样例测 |
 | **两轮代码自查（9 bug 修复 + 回归测试）** | ✅ **v1.2 新增** | 含 3 个严重项（状态层空转 / 多轮链断 / prev_id 回传），见 `docs/REVIEW.md` 第五节 |
-| 三组对照实验 | ⏸ 等 Anthropic 端点通道恢复 | `experiments/`，框架已就绪；验站脚本 `tools/verify_cache.py` |
+| 三组对照实验 | ✅ 全量实测完成 | `experiments/`（含 `rich_experiments.py` 覆盖实验 E20–E28）；结果见 `docs/experiment-results.md` |
 | TRACK04 签字确认稿 | ✅ v1.1 新增 | `docs/TRACK04_签字确认稿.md`，分工会直接签 |
 | 弹网页（本地仪表盘） | 🔜 骨架 | `src/webui/` 安全骨架 |
 
@@ -84,7 +84,7 @@ src/
   warmup/        max_tokens:0 预热
   webui/         弹网页本地仪表盘（安全骨架）
 config/          session.json（Session 边界可切换配置）
-experiments/     三组对照实验（dry-run 可跑）
+experiments/     三组对照实验 + rich_experiments.py 覆盖实验（E20–E28）
 tests/           离线单测（录制样例 + 自查回归 + 多轮链 E2E）
 tools/           mock_backend + verify_cache + smoke_e2e + recordings
 docs/            ir-schema.md / capability-matrix.md / REVIEW.md / TRACK04_签字确认稿.md
