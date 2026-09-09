@@ -1,0 +1,21 @@
+{
+  "name": "protocol-bridge-ts",
+  "version": "2.0.0",
+  "private": true,
+  "description": "OpenAI Chat / Responses 与 Anthropic 协议转换层（TypeScript 移植版，对应 Python v1.7）",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test \"tests/*.test.ts\"",
+    "smoke": "node tools/smoke_e2e.ts",
+    "typecheck": "tsc --noEmit",
+    "gateway": "node src/gateway/server.ts",
+    "mock": "node tools/mock_backend.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -11,6 +11,9 @@ data/*
 metrics.jsonl
 experiments/report.json
 
+# Node（ts/ 移植版）
+node_modules/
+
 # 系统
 Thumbs.db
 .DS_Store

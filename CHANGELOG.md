@@ -76,3 +76,11 @@
 - 客户端中途断开：已收到的部分照常落账（费用已实际发生）
 - mock：`/chat/completions` 路径发 Chat 形状 chunk（role 首帧 + finish + usage + [DONE]）
 - 测试：`TestChatStreamCollector` 3 项单测；冒烟第 7 组 7 项（两个透传方向文本拼合 / 逐块到达 ~31ms / [DONE] / 501）。56 项单测 + 25 项冒烟全过
+
+## 2026-09-09 · v2.0 TypeScript 全量移植（本提交）
+
+- **`ts/` 目录：对齐上游 TencentDB-Agent-Memory 技术栈（Node 22 + TypeScript）的全量移植**，功能对齐 Python 版 v1.7。IR 契约 / 三对 adapter / 状态层（node:sqlite）/ 网关 / SSE 流式（转换 + 透传 + 501）/ 埋点 / 预热 / mock / 冒烟，模块与 Python 版一一对应
+- **测试镜像**：56 项离线单测（node:test）+ 25 项端到端冒烟，用例与 Python 版逐条对应；strict + erasableSyntaxOnly 类型检查全过；运行零第三方依赖（Node 22 类型擦除，无需编译），开发依赖仅 typescript
+- 差异清单（有意为之，见 ts/README.md）：不读系统代理（恒直连 ≡ Python 版 PB_DIRECT=1）、node:sqlite 实验警告、property 测试 PRNG 换 mulberry32（性质不变）；webui / verify_cache / experiments 未移植（后续 PR）
+- CI 加 `unittest-ts` job（typecheck + 单测 + 冒烟）；Python job 测试数口径同步 56/25
+- Python 版保留为参考实现；docs/ 契约与实验文档对两个实现同样适用

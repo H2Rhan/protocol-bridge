@@ -34,6 +34,7 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | TRACK04 边界参数对齐稿 | ✅ 已对齐 | `docs/TRACK04_签字确认稿.md`（single_task 等三参数已定稿） |
 | 弹网页（本地仪表盘） | ✅ 记忆编排界面 | `src/webui/` 安全骨架 + 记忆勾选/裁剪 + 缓存前缀可视化 |
 | 已知限制（边界自觉） | 📋 12 项四要素（3 项已闭环留档） | `docs/LIMITATIONS.md`（含结论隔离证明） |
+| **TypeScript 移植版** | ✅ **v2.0**（对齐上游技术栈） | `ts/`：56 项单测 + 25 项冒烟 + strict 类型检查全过（用例与 Python 版一一镜像），差异清单见 `ts/README.md` |
 
 ## 快速开始（离线）
 
@@ -104,6 +105,7 @@ experiments/     三组对照 + rich_experiments.py（E20–E28）+ rich_experim
 tests/           离线单测（录制样例 + 自查回归 + 多轮链 E2E）
 tools/           mock_backend + verify_cache + smoke_e2e + recordings
 data/            34 组实验原始数据（逐轮 jsonl + 汇总 csv，溯源表见 data/README.md）
+ts/              TypeScript 全量移植（对齐上游 Node 22 + TS 技术栈，v2.0）
 docs/            ir-schema.md / capability-matrix.md / experiment-results.md / LIMITATIONS.md / REVIEW.md / TRACK04_签字确认稿.md
 CHANGELOG.md     按日期演进记录（v0 契约冻结 → v1.2 → 实验交付 → 覆盖补全）
 ```
