@@ -84,7 +84,7 @@ src/
   warmup/        max_tokens:0 预热
   webui/         弹网页本地仪表盘（安全骨架）
 config/          session.json（Session 边界可切换配置）
-experiments/     三组对照实验 + rich_experiments.py 覆盖实验（E20–E28）
+experiments/     三组对照 + rich_experiments.py（E20–E28）+ rich_experiments2.py（E30–E34）
 tests/           离线单测（录制样例 + 自查回归 + 多轮链 E2E）
 tools/           mock_backend + verify_cache + smoke_e2e + recordings
 docs/            ir-schema.md / capability-matrix.md / REVIEW.md / TRACK04_签字确认稿.md
