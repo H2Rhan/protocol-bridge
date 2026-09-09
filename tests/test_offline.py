@@ -9,6 +9,7 @@ import random
 import string
 import sys
 import threading
+import time
 import unittest
 import urllib.request
 
@@ -89,6 +90,41 @@ class TestStateLayer(unittest.TestCase):
         s.touched_at -= 10  # 假装已超时（持久化层需写回才生效）
         store._save(s)
         self.assertEqual(store.evict_expired(), 1)
+
+    def test_lazy_eviction_throttled(self):
+        """LIMITATIONS #11 回归：惰性淘汰按间隔节流，不每请求全表扫描。"""
+        cfg = SessionConfig(end_policy="ttl", ttl_seconds=1, on_end="archive")
+        store = SessionStore(cfg, db_path=":memory:")
+        self.addCleanup(store.shutdown)
+        t0 = time.time()
+        s = store.get_or_create("task-old")
+        s.touched_at = t0 - 100
+        store._save(s)
+        # get_or_create 本身已触发过一次实时惰性淘汰（节流窗由此刻起算），
+        # 重置 _last_evict 以便用显式 now 做确定性验证
+        store._last_evict = 0
+        # 首次触发：淘汰 1 个超时会话
+        self.assertEqual(store.maybe_evict(now=t0), 1)
+        # 节流窗口内（< 60s）：不再扫描，即使又有新超时会话
+        s2 = store.get_or_create("task-old2")
+        s2.touched_at = t0 - 100
+        store._save(s2)
+        self.assertEqual(store.maybe_evict(now=t0 + 30), 0)
+        # 窗口过后：恢复淘汰
+        self.assertEqual(store.maybe_evict(now=t0 + 61), 1)
+
+    def test_get_or_create_triggers_lazy_eviction(self):
+        """LIMITATIONS #11 回归：正常读写路径（get_or_create）会顺手淘汰超时会话。"""
+        cfg = SessionConfig(end_policy="ttl", ttl_seconds=1, on_end="archive")
+        store = SessionStore(cfg, db_path=":memory:")
+        self.addCleanup(store.shutdown)
+        s = store.get_or_create("task-expired")
+        s.touched_at -= 100
+        store._save(s)
+        store._last_evict = 0  # 绕过节流，模拟「距上次淘汰已很久」
+        store.get_or_create("task-new")  # 任意流量即触发
+        self.assertTrue(store._load("task-expired").closed)
+        self.assertFalse(store._load("task-new").closed)
 
     def test_sqlite_persistence_roundtrip(self):
         """重启（换连接）后会话与 meta 不丢。"""

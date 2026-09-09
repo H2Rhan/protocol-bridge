@@ -1,7 +1,7 @@
 # 代码评审材料（Code Review Pack）
 
 > 版本 v1.2（2026-09-02）｜ src 1493 行 + tools/experiments/tests 1065 行（纯标准库，零第三方依赖，Python 3.11+）
-> 测试：**44 项单测全过 + 11 项端到端冒烟全过**（2026-09-09，含第三轮自查回归 + property-based 性质测试）+ Groq 真实链路验证通过（2026-09-01）
+> 测试：**46 项单测全过 + 11 项端到端冒烟全过**（2026-09-09，含第三轮自查回归 + property-based 性质测试 + 惰性淘汰回归）+ Groq 真实链路验证通过（2026-09-01）
 > 本版差异：**两轮代码自查发现 9 个真实 bug，全部修复并各配回归测试**（见第六节）
 
 ## 一、整体架构（IR 星型）
@@ -112,12 +112,12 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | `verify_cache.py` | 152 | **验站脚本**：唯一随机 run_id 前缀两步验证（预热看 creation → 复发看 read）；PASS/PARTIAL/FAIL；`max_tokens:0` 被拒自动降级 1 |
 | `smoke_e2e.py` | 164 | **v1.2 新增**：端到端冒烟——真起 mock + 网关两个子进程，跑 5 组 11 项断言（直通/跨协议/多轮链/预热/非法路由），退出码 0/1 |
 
-### tests/ —— 测试（44 项全过）
+### tests/ —— 测试（46 项全过）
 
 | 测试类 | 覆盖 |
 | ------ | ---- |
 | `TestAdapterRoundTrip` | Chat→IR→Anthropic 往返、断点数 ≤4 且 ≥3、usage 三口径归一 |
-| `TestStateLayer` | prev_id 重放、重放三策略、TTL 淘汰、SQLite 重启不丢 |
+| `TestStateLayer` | prev_id 重放、重放三策略、TTL 淘汰、惰性淘汰节流（v1.5）、SQLite 重启不丢 |
 | `TestWarmup` | 预热构造、冲突校验、"畸形"响应解析 |
 | `TestSessionConfig` | 配置加载/热切换/快照 |
 | `TestGatewayPolicies` | 预热四类拒绝、记忆注入去重+cap+cap 三级生效 |
@@ -133,7 +133,7 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 
 | 验证 | 结果 | 日期 |
 | ---- | ---- | ---- |
-| 44 项单测（`-W error::ResourceWarning` 下零警告，含第三轮自查回归 + property-based） | ✅ 全过 | 2026-09-09 |
+| 46 项单测（`-W error::ResourceWarning` 下零警告，含第三轮自查回归 + property-based + 惰性淘汰） | ✅ 全过 | 2026-09-09 |
 | 11 项端到端冒烟（子进程级，`tools/smoke_e2e.py`） | ✅ 全过 | 2026-09-02 |
 | 多轮 previous_response_id 链路（0→2→4 条重放） | ✅ 修复后通过 | 2026-09-02 |
 | Groq 真实链路（Chat 直通 + Responses→Chat + usage 归一 + 埋点） | ✅ | 2026-09-01 |

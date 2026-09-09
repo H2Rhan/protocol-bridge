@@ -58,8 +58,13 @@ class SessionStore:
     db_path: None → 环境变量 PB_DB → 项目 data/sessions.db；测试可传 ":memory:"。
     """
 
+    # 惰性 TTL 淘汰的最小间隔（秒）：两次全表淘汰扫描之间至少隔这么久，
+    # 避免每个请求都扫一次 sessions 表。
+    _EVICT_INTERVAL = 60.0
+
     def __init__(self, cfg: SessionConfig, db_path: str | None = None):
         self.cfg = cfg
+        self._last_evict = 0.0
         path = db_path or os.environ.get("PB_DB") or _DEFAULT_DB
         if path != ":memory:":
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -122,6 +127,9 @@ class SessionStore:
 
     # -- session 生命周期 --------------------------------------------------
     def get_or_create(self, key: str) -> Session:
+        # 惰性淘汰（LIMITATIONS #11）：由流量驱动，无后台线程；
+        # 必须在 self._lock 之外调用——evict_expired 会取同一把非可重入锁。
+        self.maybe_evict()
         with self._lock:
             s = self._load(key)
             if s is None or s.closed:
@@ -198,6 +206,18 @@ class SessionStore:
             self._save(session)
 
     # -- TTL 淘汰 -----------------------------------------------------------
+    def maybe_evict(self, now: float | None = None) -> int:
+        """惰性 TTL 淘汰：读写路径顺手调用，按 _EVICT_INTERVAL 节流。
+
+        返回实际淘汰数量；处于节流窗口内时返回 0（未执行扫描）。
+        _last_evict 的竞写是良性的（最坏情况是多扫一次表），故不加锁。
+        """
+        now = now if now is not None else time.time()
+        if now - self._last_evict < self._EVICT_INTERVAL:
+            return 0
+        self._last_evict = now
+        return self.evict_expired(now)
+
     def evict_expired(self, now: float | None = None) -> int:
         """TTL 结束策略下淘汰超时会话。返回淘汰数量。"""
         if self.cfg.end_policy != TTL:

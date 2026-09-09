@@ -52,3 +52,10 @@
 - **GitHub Actions CI**：`.github/workflows/test.yml`，Python 3.11/3.12/3.13 矩阵跑单测 + 冒烟 + dry-run（零依赖，无需装包）；README 加 badge 行
 - README 修正一处悬空引用（原指向方案 v3.1 已不存在的节号，改指实验文档方法学节）
 - 文档口径：实验文档成本列改为**相对倍数**（7.35× / 10.2× / 7.9×），不再出现绝对金额；ir-schema 移除签字栏（冻结约束以「双方确认 + 变更记录」为准）
+
+## 2026-09-09 · v1.5 运维闭环：TTL 惰性淘汰 + 实验数据入库（本提交）
+
+- **TTL 惰性淘汰**（LIMITATIONS #11 闭环）：`SessionStore.maybe_evict()`——读写路径（`get_or_create`）顺手触发淘汰，60s 节流避免每请求全表扫描；在锁外调用规避非可重入锁死锁。回归测试 2 项（节流窗口 / 流量驱动），测试 44 → **46 项全过** + 11 项冒烟全过
+- **实验原始数据入库**：`data/experiments/` 19 个文件（34 组实测逐轮 jsonl + 汇总 csv）+ `data/README.md` 溯源表——实验文档每个数字可回查到具体文件具体行；`.gitignore` 改为只忽略运行时产物、放行精选数据目录
+- LIMITATIONS #12 补标已闭环（property-based + lossy-fields 已于 PR #8 落地，原标记滞后）
+- README：目录补 data/、已知限制行标注 3 项已闭环、单测数 40 → 46；REVIEW.md 测试口径统一为 46 项
