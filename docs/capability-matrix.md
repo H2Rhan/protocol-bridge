@@ -48,6 +48,6 @@
 | usage 归一 | ✅ | ✅ | ✅ | 离线已测 + Groq 真实链路验证 |
 | previous_response_id | — | ✅（状态层重放） | — | **已实现**：SQLite 会话表 + TTL + 多轮链 E2E 测试（0→2→4 重放累积） |
 | 缓存断点布局 | ✅ | ✅ | — | **已落地**：3 固定 + 1 滚动，exp7/E24 实测 |
-| SSE 流式 | ◐ | ◐ | ◐ | **v1.6 部分逐块**：chat 客户端 ← anthropic 上游已逐块转换（`src/gateway/sse.py`，冒烟实测 30.7ms 逐块到达）；其余方向整读透传 → LIMITATIONS #1（E21 直连实验证明流式无损缓存命中率） |
+| SSE 流式 | ◐ | ◐ | ◐ | **v1.7 三方向逐块**：chat←anthropic 逐块转换 + chat←chat / anthropic←anthropic 透传（冒烟实测 ~31ms 逐块到达）；response 源等未实现方向显式 501 → LIMITATIONS #1（E21 直连实验证明流式无损缓存命中率） |
 | max_tokens:0 预热 | — | — | ✅ | 字段处理已测 + 实测预热后 100% 命中 |
 | 多模态 / Realtime / Batches | ❌ | ❌ | ❌ | 方案 3.8 明确不做 |

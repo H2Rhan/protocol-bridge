@@ -19,7 +19,8 @@ from src.adapters.base import Dropped, assistant_from_upstream
 from src.adapters.chat import ChatAdapter, usage_from_chat
 from src.adapters.anthropic import AnthropicAdapter, usage_from_anthropic
 from src.adapters.response import ResponseAdapter
-from src.gateway.sse import AnthropicToChatStream, parse_sse_lines
+from src.gateway.sse import (AnthropicToChatStream, ChatStreamCollector,
+                             parse_sse_lines)
 from src.ir import model as ir
 from src.state.session_config import (SessionConfig, build_prefix, load,
                                       FULL, LAST_BREAKPOINT, SLIDING_WINDOW)
@@ -974,6 +975,51 @@ class TestSseConversion(unittest.TestCase):
         chunk = self._parse_frame(frames[0])
         self.assertIn("Overloaded",
                       chunk["choices"][0]["delta"].get("content", ""))
+
+
+class TestChatStreamCollector(unittest.TestCase):
+    """v1.7 直通流式：chat←chat 旁路收集器（不转换，只汇总）。"""
+
+    def test_text_and_usage_collected(self):
+        c = ChatStreamCollector()
+        c.feed_data(json.dumps({"choices": [{"delta": {"role": "assistant",
+                                                     "content": "你"}}]}))
+        c.feed_data(json.dumps({"choices": [{"delta": {"content": "好"}}]}))
+        c.feed_data(json.dumps({"choices": [{"delta": {},
+                                             "finish_reason": "stop"}],
+                                "usage": {"prompt_tokens": 100,
+                                          "completion_tokens": 7}}))
+        c.feed_data("[DONE]")
+        self.assertEqual(c.usage()["prompt_tokens"], 100)
+        synth = c.synthetic_response()
+        self.assertEqual(synth["choices"][0]["message"]["content"], "你好")
+        # 复用既有落库/归一路径
+        reply = assistant_from_upstream("openai_chat", synth)
+        self.assertEqual(reply.blocks[0].text, "你好")
+        u = usage_from_chat(synth["usage"])
+        self.assertEqual(u.output_tokens, 7)
+
+    def test_tool_call_slots_merged(self):
+        """Chat 流的工具参数同样分段到达：按 index 攒槽、拼完整。"""
+        c = ChatStreamCollector()
+        c.feed_data(json.dumps({"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "call_1", "type": "function",
+             "function": {"name": "get_weather", "arguments": "{\"ci"}}]}}]}))
+        c.feed_data(json.dumps({"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": "ty\":\"天津\"}"}}]}}]}))
+        synth = c.synthetic_response()
+        tc = synth["choices"][0]["message"]["tool_calls"][0]
+        self.assertEqual(tc["id"], "call_1")
+        self.assertEqual(tc["function"]["arguments"], '{"city":"天津"}')
+
+    def test_garbage_and_empty_tolerated(self):
+        c = ChatStreamCollector()
+        c.feed_data("")           # 空行
+        c.feed_data("非JSON")      # 容错跳过
+        c.feed_data("[DONE]")
+        self.assertEqual(c.usage(), {})
+        synth = c.synthetic_response()
+        self.assertEqual(synth["choices"][0]["message"]["content"], "")
 
 
 if __name__ == "__main__":

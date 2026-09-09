@@ -190,6 +190,27 @@ def sse_lines(payload: dict, path: str):
         yield "event: message_stop\n"
         yield 'data: {"type":"message_stop"}\n\n'
         return
+    if "chat/completions" in path:
+        _, read = _cache_tick(payload)
+        chunks = ["mock ", "stream ", "reply"]
+        for i, c in enumerate(chunks):
+            delta = {"content": c}
+            if i == 0:
+                delta = {"role": "assistant", "content": c}
+            frame = {"id": "chatcmpl_mock_stream", "object": "chat.completion.chunk",
+                     "created": int(time.time()), "model": payload.get("model", "mock"),
+                     "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+            yield f"data: {json.dumps(frame, ensure_ascii=False)}\n\n"
+            time.sleep(0.01)
+        fin = {"id": "chatcmpl_mock_stream", "object": "chat.completion.chunk",
+               "created": int(time.time()), "model": payload.get("model", "mock"),
+               "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+               "usage": {"prompt_tokens": _input_chars(payload),
+                         "completion_tokens": 12,
+                         "prompt_tokens_details": {"cached_tokens": read}}}
+        yield f"data: {json.dumps(fin, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
     for c in ["mock ", "stream ", "reply"]:
         yield f"data: {json.dumps({'type': 'content_block_delta', 'delta': {'type': 'text_delta', 'text': c}})}\n\n"
         time.sleep(0.01)

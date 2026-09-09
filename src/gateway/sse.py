@@ -170,3 +170,68 @@ class AnthropicToChatStream:
             content.append({"type": "tool_use", "id": tb["id"],
                             "name": tb["name"], "input": tool_input})
         return {"content": content, "usage": self.usage()}
+
+
+def tee_lines(line_iter, wfile):
+    """透传三通：每行原样写给客户端（即时 flush），同时 yield 给旁路收集器。
+
+    直通流式（同协议）不做任何转换——转发的是上游原始字节，
+    旁路只负责把 usage / 文本攒下来供流尾埋点与历史落库。
+    """
+    for line in line_iter:
+        wfile.write(line if isinstance(line, (bytes, bytearray)) else line.encode("utf-8"))
+        wfile.flush()
+        yield line
+
+
+class ChatStreamCollector:
+    """chat←chat 直通流式的流尾收集器（不转换，只汇总）。
+
+    Chat 流式响应默认不带 usage（除非客户端传 stream_options.include_usage），
+    收不到就是 0——如实记录，不编造。
+    """
+
+    def __init__(self) -> None:
+        self._text_parts: list[str] = []
+        self._usage: dict = {}
+        # index -> {"id","name","args":[str]}（Chat 流的工具参数也是分段 delta）
+        self._tool_slots: dict[int, dict] = {}
+
+    def feed_data(self, data_str: str) -> None:
+        """喂一行 SSE data 内容（已去掉 'data:' 前缀）。"""
+        data_str = data_str.strip()
+        if not data_str or data_str == "[DONE]":
+            return
+        try:
+            d = json.loads(data_str)
+        except ValueError:
+            return
+        if isinstance(d.get("usage"), dict):
+            self._usage = d["usage"]
+        for ch in d.get("choices", []) or []:
+            delta = ch.get("delta", {}) or {}
+            if delta.get("content"):
+                self._text_parts.append(delta["content"])
+            for tc in delta.get("tool_calls", []) or []:
+                i = tc.get("index", 0)
+                slot = self._tool_slots.setdefault(i, {"id": "", "name": "", "args": []})
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function", {}) or {}
+                if fn.get("name"):
+                    slot["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["args"].append(fn["arguments"])
+
+    def usage(self) -> dict:
+        return dict(self._usage)
+
+    def synthetic_response(self) -> dict:
+        """拼成 Chat 非流式响应形状，复用 `_usage_for` / `assistant_from_upstream`。"""
+        msg: dict = {"role": "assistant", "content": "".join(self._text_parts)}
+        if self._tool_slots:
+            msg["tool_calls"] = [
+                {"id": s["id"], "type": "function",
+                 "function": {"name": s["name"], "arguments": "".join(s["args"])}}
+                for _, s in sorted(self._tool_slots.items())]
+        return {"choices": [{"index": 0, "message": msg}], "usage": self._usage}
