@@ -33,11 +33,13 @@ DIRECT = os.environ.get("PB_DIRECT", "") == "1"         # 1 = 绕过系统代理
 BIND = ("127.0.0.1", int(os.environ.get("PB_PORT", "8080")))
 METRICS_PATH = os.environ.get("PB_METRICS", "metrics.jsonl")
 
-# 真实后端的端点路径（mock_backend 同时兼容这几条路径 + 网关转发路径）
+# 真实后端的端点路径（mock_backend 同时兼容这几条路径 + 网关转发路径）。
+# 可经环境变量覆盖：接 OpenRouter 类端点（base 含 /api/v1）时，
+# anthropic 目标需设为 "/messages"（否则拼出 /api/v1/v1/messages 多一个 /v1）。
 BACKEND_PATH = {
-    "openai_chat": "/chat/completions",
-    "openai_response": "/responses",
-    "anthropic": "/v1/messages",
+    "openai_chat": os.environ.get("PB_CHAT_PATH", "/chat/completions"),
+    "openai_response": os.environ.get("PB_RESPONSE_PATH", "/responses"),
+    "anthropic": os.environ.get("PB_ANTHROPIC_PATH", "/v1/messages"),
 }
 
 ADAPTERS = {
