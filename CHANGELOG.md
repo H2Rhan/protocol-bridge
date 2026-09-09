@@ -35,3 +35,12 @@
 - experiment-results 补「第〇节 · 证伪条件预登记」（实验编号 = 假设编号，回链问题清单条目）
 - 新增 `docs/LIMITATIONS.md`：12 项未闭环/边界项四要素（影响半径 / 触发条件 / 绕过方式 / 后续路线）+ 结论隔离证明
 - README：状态表加「证据」列；SSE 措辞更正；新增「与上游 TencentDB-Agent-Memory 的关系」
+
+## 2026-09-09 · v1.4 代码补强：第三轮自查 + 工具 ID 映射 + 结构化重放（本提交）
+
+- **第三轮自查（评审前逐文件复查）再发现 2 个真实 bug，各配回归测试**：
+  - 跨协议工具参数丢失：OpenAI 系 `arguments` 是 JSON 字符串，to_ir 只塞 `extra` 不解析，`tool_input` 恒为 None → 转到 Anthropic 全部渲染成空 `input {}`（`TestCrossProtocolToolArgs` 4 项）
+  - thinking `signature` 与 `redacted_thinking` 在 to_ir 被丢 → 多轮思考链下一轮必 400（`TestThinkingSignature` 2 项）
+- **工具调用 ID 双向持久映射**（问题清单组4#3，原 LIMITATIONS #2）：`src/state/idmap.py` 会话级 canonical ↔ 各协议外部形式，SQLite 持久、铸造稳定（前缀不抖动）、会话间隔离（并发分叉不串号）；网关 to_ir 后归一、from_ir 前翻译、落库前翻回 canonical（`TestToolIdMap` 5 项）
+- **状态层重放保留结构化块**（原 LIMITATIONS #3）：`assistant_from_upstream()` 保留 thinking（signature / redacted）与 tool_use（含解析后 tool_input）入历史，多轮思考链/工具链不再断（`TestAssistantFromUpstream` 4 项）
+- 测试 25 → **40 项全过** + 11 项端到端冒烟全过（Python 3.13）

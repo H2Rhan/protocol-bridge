@@ -32,7 +32,14 @@ class AnthropicAdapter(Adapter):
             return {"type": "tool_result", "tool_use_id": b.tool_id,
                     "content": b.text or ""}
         if b.kind == ir.THINKING:
-            return {"type": "thinking", "thinking": b.text or ""}
+            # v1.4：signature 必须原样回传（缺失下一轮直接 400）；
+            # redacted_thinking 逐字节透传 data。
+            if b.extra.get("redacted"):
+                return {"type": "redacted_thinking", "data": b.extra.get("data", "")}
+            out = {"type": "thinking", "thinking": b.text or ""}
+            if b.extra.get("signature"):
+                out["signature"] = b.extra["signature"]
+            return out
         dropped.add(f"block.{b.kind}", "IR 块无 Anthropic 对应类型（方案 3.8 不做）",
                     "explicit")
         return None
@@ -69,7 +76,15 @@ class AnthropicAdapter(Adapter):
                         msg.blocks.append(ir.Block(kind=ir.TOOL_RESULT, tool_id=b.get("tool_use_id"),
                                                    text=_result_text(b), cache_breakpoint=bp))
                     elif t == "thinking":
-                        msg.blocks.append(ir.Block(kind=ir.THINKING, text=b.get("thinking", "")))
+                        # v1.4：signature 进 extra 保留——下一轮必须原样回传，丢则 400
+                        msg.blocks.append(ir.Block(
+                            kind=ir.THINKING, text=b.get("thinking", ""),
+                            extra={"signature": b.get("signature", "")}))
+                    elif t == "redacted_thinking":
+                        # 逐字节透传 data，不能判成无效块丢掉（问题清单组4#5）
+                        msg.blocks.append(ir.Block(
+                            kind=ir.THINKING, text="",
+                            extra={"redacted": True, "data": b.get("data", "")}))
                     else:
                         dropped.add(f"content.{t}", "Anthropic 内容块，方案 3.8 不做", "explicit")
             req.messages.append(msg)

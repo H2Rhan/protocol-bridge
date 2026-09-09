@@ -12,7 +12,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.adapters.base import Dropped
+from src.adapters.base import Dropped, assistant_from_upstream
 from src.adapters.chat import ChatAdapter, usage_from_chat
 from src.adapters.anthropic import AnthropicAdapter, usage_from_anthropic
 from src.adapters.response import ResponseAdapter
@@ -452,6 +452,179 @@ class TestStatefulChainE2E(unittest.TestCase):
         self.assertEqual(rw["usage"]["output_tokens"], 0)
         self.assertFalse(rw.get("id", "").startswith("resp_"),
                          "预热轮不应登记进 previous_response_id 响应链")
+
+
+class TestCrossProtocolToolArgs(unittest.TestCase):
+    """第三轮自查回归 #1：跨协议工具调用参数丢失（v1.4 修复）。
+
+    OpenAI 系 arguments 是 JSON 字符串、Anthropic input 是 dict。v1.3 之前
+    chat/response 的 to_ir 只把字符串塞进 extra、tool_input 恒为 None，
+    转到 Anthropic 全部渲染成空 input {}——工具全链路跨协议断。
+    """
+
+    def test_chat_to_anthropic_keeps_tool_input(self):
+        payload = {"model": "gpt-x", "messages": [
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {
+                    "name": "search", "arguments": '{"city": "天津", "n": 3}'}}]},
+        ]}
+        req = ChatAdapter().to_ir(payload, Dropped())
+        b = req.messages[0].blocks[0]
+        self.assertEqual(b.tool_input, {"city": "天津", "n": 3},
+                         "arguments 字符串必须解析成 dict 进 tool_input")
+        out = AnthropicAdapter().from_ir(req, Dropped())
+        tu = out["messages"][0]["content"][0]
+        self.assertEqual(tu["input"], {"city": "天津", "n": 3},
+                         "Chat→Anthropic 的 tool_use.input 不得为空 {}")
+
+    def test_anthropic_to_chat_keeps_arguments(self):
+        payload = {"model": "claude-x", "max_tokens": 100, "messages": [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "search",
+                 "input": {"q": "犀牛鸟"}}]},
+        ]}
+        req = AnthropicAdapter().to_ir(payload, Dropped())
+        out = ChatAdapter().from_ir(req, Dropped())
+        args = out["messages"][0]["tool_calls"][0]["function"]["arguments"]
+        self.assertEqual(json.loads(args), {"q": "犀牛鸟"},
+                         "Anthropic→Chat 的 arguments 不得退化成 '{}'")
+
+    def test_response_to_anthropic_keeps_tool_input(self):
+        payload = {"model": "gpt-x", "input": [
+            {"type": "function_call", "name": "calc", "call_id": "call_9",
+             "arguments": '{"x": 1}'}]}
+        req = ResponseAdapter().to_ir(payload, Dropped())
+        out = AnthropicAdapter().from_ir(req, Dropped())
+        self.assertEqual(out["messages"][0]["content"][0]["input"], {"x": 1})
+
+    def test_same_protocol_arguments_byte_lossless(self):
+        """同协议往返仍走 extra 原始字符串，字节无损（不受 v1.4 解析影响）。"""
+        raw = '{"a":  1, "b": [1,2]}'  # 带非常规空格
+        payload = {"model": "gpt-x", "messages": [
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {
+                    "name": "f", "arguments": raw}}]},
+        ]}
+        req = ChatAdapter().to_ir(payload, Dropped())
+        out = ChatAdapter().from_ir(req, Dropped())
+        self.assertEqual(out["messages"][0]["tool_calls"][0]["function"]["arguments"], raw)
+
+
+class TestThinkingSignature(unittest.TestCase):
+    """第三轮自查回归 #2：thinking signature / redacted_thinking 往返（v1.4 修复）。
+
+    Anthropic 开启 thinking 后下一轮必须原样回传 signature，redacted_thinking
+    必须逐字节透传，否则直接 400。v1.3 之前 to_ir 把两者都丢了。
+    """
+
+    def test_thinking_signature_roundtrip(self):
+        payload = {"model": "claude-x", "max_tokens": 100, "messages": [
+            {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "推理过程",
+                 "signature": "sig_abc123"},
+                {"type": "text", "text": "答案"}]},
+        ]}
+        req = AnthropicAdapter().to_ir(payload, Dropped())
+        out = AnthropicAdapter().from_ir(req, Dropped())
+        blk = out["messages"][0]["content"][0]
+        self.assertEqual(blk.get("signature"), "sig_abc123",
+                         "thinking 的 signature 往返必须保留")
+
+    def test_redacted_thinking_byte_exact(self):
+        payload = {"model": "claude-x", "max_tokens": 100, "messages": [
+            {"role": "assistant", "content": [
+                {"type": "redacted_thinking", "data": "enc_逐字节数据=="}]},
+        ]}
+        req = AnthropicAdapter().to_ir(payload, Dropped())
+        self.assertEqual(len(req.messages[0].blocks), 1,
+                         "redacted_thinking 不得被判成无效块丢弃")
+        out = AnthropicAdapter().from_ir(req, Dropped())
+        blk = out["messages"][0]["content"][0]
+        self.assertEqual(blk, {"type": "redacted_thinking", "data": "enc_逐字节数据=="})
+
+
+class TestAssistantFromUpstream(unittest.TestCase):
+    """v1.4：状态层重放原料保留结构化块（thinking / tool_use），不再只取文本。"""
+
+    def test_anthropic_structured_blocks(self):
+        resp = {"content": [
+            {"type": "thinking", "thinking": "想", "signature": "s1"},
+            {"type": "text", "text": "答"},
+            {"type": "tool_use", "id": "toolu_7", "name": "search",
+             "input": {"q": "x"}}]}
+        msg = assistant_from_upstream("anthropic", resp)
+        kinds = [b.kind for b in msg.blocks]
+        self.assertEqual(kinds, [ir.THINKING, ir.TEXT, ir.TOOL_USE])
+        self.assertEqual(msg.blocks[0].extra["signature"], "s1")
+        self.assertEqual(msg.blocks[2].tool_input, {"q": "x"})
+
+    def test_chat_tool_calls(self):
+        resp = {"choices": [{"message": {
+            "content": None,
+            "tool_calls": [{"id": "call_3", "type": "function", "function": {
+                "name": "f", "arguments": '{"k": 2}'}}]}}]}
+        msg = assistant_from_upstream("openai_chat", resp)
+        self.assertEqual(len(msg.blocks), 1)
+        self.assertEqual(msg.blocks[0].kind, ir.TOOL_USE)
+        self.assertEqual(msg.blocks[0].tool_input, {"k": 2})
+
+    def test_response_function_call_and_reasoning(self):
+        resp = {"output": [
+            {"type": "reasoning", "summary": "想了一下",
+             "encrypted_content": "enc1"},
+            {"type": "function_call", "name": "f", "call_id": "call_5",
+             "arguments": '{"y": true}'},
+            {"type": "message", "content": [
+                {"type": "output_text", "text": "好"}]}]}
+        msg = assistant_from_upstream("openai_response", resp)
+        kinds = [b.kind for b in msg.blocks]
+        self.assertEqual(kinds, [ir.THINKING, ir.TOOL_USE, ir.TEXT])
+        self.assertEqual(msg.blocks[1].tool_input, {"y": True})
+
+    def test_empty_response_returns_none(self):
+        self.assertIsNone(assistant_from_upstream("anthropic", {"content": []}))
+        self.assertIsNone(assistant_from_upstream("openai_chat", {}))
+
+
+class TestToolIdMap(unittest.TestCase):
+    """v1.4：工具 ID 双向持久映射（问题清单组4#3）。"""
+
+    def setUp(self):
+        self.store = SessionStore(SessionConfig(), ":memory:")
+        self.idm = self.store.idmap
+
+    def test_same_proto_outgoing_is_byte_lossless(self):
+        canon = self.idm.incoming("s1", "toolu_abc", "anthropic")
+        self.assertEqual(canon, "toolu_abc")
+        self.assertEqual(self.idm.outgoing("s1", canon, "anthropic"), "toolu_abc",
+                         "同协议 outgoing 必须原样返回 canonical")
+
+    def test_cross_proto_mint_stable_and_prefix(self):
+        self.idm.incoming("s1", "toolu_abc", "anthropic")
+        e1 = self.idm.outgoing("s1", "toolu_abc", "openai_chat")
+        self.assertTrue(e1.startswith("call_"), "Chat 侧铸造 ID 应用 call_ 前缀")
+        e2 = self.idm.outgoing("s1", "toolu_abc", "openai_chat")
+        self.assertEqual(e1, e2, "同一会话内铸造结果必须稳定（前缀序列化不抖动）")
+
+    def test_roundtrip_restores_original_id(self):
+        """Anthropic→Chat→Anthropic 一圈，最初的 toolu_* 必须还原（否则上游 400）。"""
+        canon = self.idm.incoming("s1", "toolu_orig", "anthropic")
+        chat_ext = self.idm.outgoing("s1", canon, "openai_chat")
+        back = self.idm.incoming("s1", chat_ext, "openai_chat")
+        self.assertEqual(back, canon, "外部形式必须能反解回 canonical")
+        self.assertEqual(self.idm.outgoing("s1", back, "anthropic"), "toolu_orig")
+
+    def test_sessions_isolated(self):
+        self.idm.incoming("s1", "toolu_abc", "anthropic")
+        self.assertEqual(self.idm.incoming("s2", "toolu_abc", "anthropic"), "toolu_abc")
+        e1 = self.idm.outgoing("s1", "toolu_abc", "openai_chat")
+        e2 = self.idm.outgoing("s2", "toolu_abc", "openai_chat")
+        self.assertNotEqual(e1, e2, "不同会话的铸造互不影响（并发分叉不串号）")
+
+    def test_shared_db_and_size(self):
+        self.idm.incoming("s1", "call_1", "openai_chat")
+        self.idm.outgoing("s1", "call_1", "anthropic")
+        self.assertEqual(self.idm.size("s1"), 2)
 
 
 def _count_breakpoints(payload: dict) -> int:

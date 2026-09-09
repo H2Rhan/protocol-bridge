@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass, field, asdict
 
 from ..ir.model import Block, Message
+from .idmap import ToolIdMap
 from .session_config import SessionConfig, build_prefix, TTL
 
 _DEFAULT_DB = os.path.join(
@@ -83,6 +84,8 @@ class SessionStore:
             """
         )
         self._db.commit()
+        # v1.4：工具调用 ID 双向映射表（与会话同库同生命周期）
+        self.idmap = ToolIdMap(self._db)
 
     # -- 序列化辅助 ----------------------------------------------------------
     @staticmethod
