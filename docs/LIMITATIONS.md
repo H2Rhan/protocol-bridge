@@ -15,12 +15,16 @@
 
 ### #2 工具调用 ID 无双向持久映射表（透传）
 
+> ✅ **v1.4 已修复**（2026-09-09）：新增 `src/state/idmap.py`（会话级 canonical ↔ 各协议外部形式，SQLite 持久、铸造稳定、并发分叉隔离），网关 `convert()` 在 to_ir 后归一、from_ir 前翻译，落库前翻回 canonical。回归测试 `TestToolIdMap`（5 项，含 Anthropic→Chat→Anthropic 还原）。以下原文留档。
+
 - **影响半径**：跨协议多轮工具链的 ID 一致性。当前 `tool_id` 经 IR 原样透传（`toolu_*` / `call_*` / `call_id` 直通），单轮与回放自身历史的场景工作正常。
 - **触发条件**：一轮协议 A 产生的工具调用 ID，在后续轮次以协议 B 回传给生成方 A 时；以及并行调用重名、分叉重放场景。
 - **绕过方式**：同协议往返（如 Anthropic→Anthropic）ID 原样有效；跨协议场景下多数 OpenAI 兼容端点接受任意字符串 ID。
 - **后续路线**：状态层增加 `id_map`（会话内双向映射 + TTL 失效），处理并行重名；配回归测试后从本清单划掉。
 
 ### #3 状态层重放只保留文本块
+
+> ✅ **v1.4 已修复**（2026-09-09）：`assistant_from_upstream()`（`src/adapters/base.py`）保留 thinking（含 signature / redacted data）与 tool_use（含解析后 tool_input）入历史；同批修复 anthropic adapter 的 signature 往返与跨协议工具参数丢失（第三轮自查 2 个 bug）。回归测试 `TestAssistantFromUpstream` / `TestThinkingSignature` / `TestCrossProtocolToolArgs`。以下原文留档。
 
 - **影响半径**：多轮工具链 / 多轮 thinking 链。`_assistant_message` 只提取文本写入会话历史——thinking 块（含 signature）与 tool_use/tool_result 块不进重放。
 - **触发条件**：开启 thinking 的多轮对话第二轮起（Anthropic 要求原样回传 thinking + signature，缺失会 400）；工具结果需跨轮引用的场景。

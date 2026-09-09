@@ -18,6 +18,8 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | 网关转发 | ✅ 离线（mock）/ Groq 真实链路已验证 | `src/gateway/`；E29 真实端点对账 |
 | SSE 流式 | ◐ 整读透传 | 逐块转换未实现 → `docs/LIMITATIONS.md` #1；E21 证明流式无损命中率 |
 | 记忆注入（幂等去重 + memory_cap） | ✅ v1.1 新增 | `inject_memories` + `TestGatewayPolicies`；管理口 `/v1/admin/session/meta` |
+| 工具调用全链路（含 ID 双向映射） | ✅ **v1.4** | 跨协议参数/签名不丢（`TestCrossProtocolToolArgs`/`TestThinkingSignature`）；`src/state/idmap.py` 会话级映射（`TestToolIdMap`） |
+| 状态层重放（结构化块） | ✅ **v1.4** | thinking（signature/redacted）与 tool_use 入历史（`TestAssistantFromUpstream`） |
 | 预热拒绝条件校验 | ✅ v1.1 新增 | stream/thinking/structured outputs/tool_choice 四类冲突 400（`TestWarmup`） |
 | 限流 | ✅ v1.1 新增 | `PB_CONCURRENCY`（默认 2） |
 | 命中率埋点（5 项暴露） | ✅ 已对账 | **E29：埋点与真实端点 usage 逐字段一致** |
@@ -32,7 +34,7 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 
 ```bash
 # 零外部依赖（仅标准库），Python 3.11+
-python -m unittest tests.test_offline -v   # 25 项离线单测：IR 往返 / adapter / 状态层 / 预热 / 自查回归 / 多轮链 E2E
+python -m unittest tests.test_offline -v   # 40 项离线单测：IR 往返 / adapter / 状态层 / 预热 / 三轮自查回归 / 多轮链 E2E / ID 映射
 python tools/smoke_e2e.py                  # 11 项端到端冒烟：真起 mock+网关子进程，5 组链路断言
 python tools/mock_backend.py               # 起 mock backend（127.0.0.1:9100，按端点返回三种协议形状）
 python -m src.gateway.server               # 起网关（转发到 mock）

@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from ..ir import model as ir
-from .base import Adapter, Dropped, record_unknown
+from .base import Adapter, Dropped, parse_arguments, record_unknown
 
 # to_ir 真正消费的顶层字段；其余一律进降级记录（见 base.record_unknown）
 _KNOWN_TOP = {"model", "input", "instructions", "tools", "max_output_tokens",
@@ -41,10 +41,13 @@ class ResponseAdapter(Adapter):
                             dropped.add(f"input.{part.get('type')}", "Responses 内容块，方案 3.8 不做", "explicit")
                 req.messages.append(msg)
             elif t == "function_call":
+                raw_args = item.get("arguments", "")
                 req.messages.append(ir.Message(role="assistant", blocks=[ir.Block(
                     kind=ir.TOOL_USE, tool_name=item.get("name"),
                     tool_id=item.get("call_id"),
-                    extra={"arguments": item.get("arguments", "")})]))
+                    # v1.4：解析成 dict 进 tool_input，跨协议到 Anthropic 不再丢参数
+                    tool_input=parse_arguments(raw_args),
+                    extra={"arguments": raw_args})]))
             elif t == "function_call_output":
                 req.messages.append(ir.Message(role="user", blocks=[ir.Block(
                     kind=ir.TOOL_RESULT, tool_id=item.get("call_id"),
@@ -75,7 +78,7 @@ class ResponseAdapter(Adapter):
                 elif b.kind == ir.TOOL_USE:
                     items.append({"type": "function_call", "name": b.tool_name,
                                   "call_id": b.tool_id,
-                                  "arguments": b.extra.get("arguments", "{}")})
+                                  "arguments": _arguments_str(b)})
                 elif b.kind == ir.TOOL_RESULT:
                     items.append({"type": "function_call_output",
                                   "call_id": b.tool_id, "output": b.text or ""})
@@ -94,6 +97,15 @@ class ResponseAdapter(Adapter):
         # 若传的是网关自己生成的 resp_xxx，上游根本不认识 → 直接 404。
         # 给客户端的 response_id 由网关在响应里注入（见 gateway/server.py）。
         return out
+
+
+def _arguments_str(b) -> str:
+    """优先用 extra 原始字符串（同协议无损）；否则从 tool_input 序列化（v1.4）。"""
+    raw = b.extra.get("arguments")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    import json as _json
+    return _json.dumps(b.tool_input or {}, ensure_ascii=False)
 
 
 def usage_from_response(usage: dict) -> ir.IRUsage:

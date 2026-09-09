@@ -7,8 +7,10 @@
 """
 from __future__ import annotations
 
+import json
+
 from ..ir import model as ir
-from .base import Adapter, Dropped, record_unknown
+from .base import Adapter, Dropped, parse_arguments, record_unknown
 
 # Chat Completions 顶层字段中，本 adapter 真正消费的部分。
 # 其余顶层字段一律进降级记录：命中率实验的第④项暴露依赖这份清单准确，
@@ -46,10 +48,15 @@ class ChatAdapter(Adapter):
                         dropped.add(f"content.{t}", "Chat 多模态内容块，方案 3.8 不做", "explicit")
             for tc in m.get("tool_calls", []) or []:
                 fn = tc.get("function", {})
+                raw_args = fn.get("arguments", "")
                 msg.blocks.append(ir.Block(
                     kind=ir.TOOL_USE, tool_name=fn.get("name"),
                     tool_id=tc.get("id"),
-                    extra={"arguments": fn.get("arguments", "")}))
+                    # v1.4：参数解析成 dict 进 tool_input——不解析的话跨协议到
+                    # Anthropic 会渲染成空 input {}（第三轮自查发现的参数丢失 bug）。
+                    # 原始字符串留 extra，chat→chat 往返无损。
+                    tool_input=parse_arguments(raw_args),
+                    extra={"arguments": raw_args}))
             if role == "tool":
                 msg.role = "user"
                 msg.blocks.append(ir.Block(
@@ -85,7 +92,7 @@ class ChatAdapter(Adapter):
                 elif b.kind == ir.TOOL_USE:
                     tool_calls.append({"id": b.tool_id, "type": "function",
                                        "function": {"name": b.tool_name,
-                                                    "arguments": b.extra.get("arguments", "{}")}})
+                                                    "arguments": _arguments_str(b)}})
                 elif b.kind == ir.TOOL_RESULT:
                     tool_results.append({"role": "tool", "tool_call_id": b.tool_id,
                                          "content": b.text or ""})
@@ -105,6 +112,18 @@ class ChatAdapter(Adapter):
                 "name": t.name, "description": t.description,
                 "parameters": t.input_schema}} for t in req.tools]
         return out
+
+
+def _arguments_str(b) -> str:
+    """Chat/Responses 侧的 arguments 是 JSON 字符串。
+
+    优先用 extra 里的原始字符串（同协议往返字节无损）；没有则从 tool_input
+    序列化——anthropic→chat 方向靠这条路把 dict 参数带过去（v1.4 修复）。
+    """
+    raw = b.extra.get("arguments")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    return json.dumps(b.tool_input or {}, ensure_ascii=False)
 
 
 def usage_from_chat(usage: dict) -> ir.IRUsage:

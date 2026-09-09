@@ -1,7 +1,7 @@
 # 代码评审材料（Code Review Pack）
 
 > 版本 v1.2（2026-09-02）｜ src 1493 行 + tools/experiments/tests 1065 行（纯标准库，零第三方依赖，Python 3.11+）
-> 测试：**25 项单测全过 + 11 项端到端冒烟全过** + Groq 真实链路验证通过（2026-09-01）
+> 测试：**40 项单测全过 + 11 项端到端冒烟全过**（2026-09-09，含第三轮自查回归）+ Groq 真实链路验证通过（2026-09-01）
 > 本版差异：**两轮代码自查发现 9 个真实 bug，全部修复并各配回归测试**（见第六节）
 
 ## 一、整体架构（IR 星型）
@@ -170,6 +170,23 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 - `MetricsLog` 无锁追加 JSONL（ThreadingHTTPServer 并发写可能坏行）→ 加锁
 - `injected_chars` 按尾部切片假设 → 改按 `extra` 标记统计
 - `prewarm.validate_warmup` 对非 dict 的 thinking 字段会崩 → 类型防御
+
+### 第三批：2026-09-09 评审前复查（v1.4，2 个真实 bug + 2 项能力补齐）
+
+> 起因：评审前对三个 adapter 与状态层做了第三轮逐文件复查。
+> 结论：前两轮的自查范围（网关/埋点/状态链）之外，**adapter 的跨协议路径**还藏着两个会让「工具全链路」结论站不住的 bug。
+
+| # | 严重度 | 问题 | 修复 |
+| - | ------ | ---- | ---- |
+| 10 | **严重** | **跨协议工具参数丢失**：OpenAI 系 `arguments` 是 JSON 字符串，chat/response 的 to_ir 只塞 `extra["arguments"]`、`tool_input` 恒为 None → 转到 Anthropic 全部渲染成空 `input {}`。反向 anthropic→chat 的 `arguments` 也退化成 `"{}"`——工具全链路跨协议双向断 | `base.parse_arguments()` 解析进 `tool_input`；from_ir 优先用 extra 原始串（同协议字节无损）、否则从 `tool_input` 序列化。`TestCrossProtocolToolArgs` 4 项 |
+| 11 | **严重** | **thinking `signature` / `redacted_thinking` 在 to_ir 被丢**：Anthropic 要求下一轮原样回传 signature、redacted 逐字节透传，丢则多轮思考链第二轮必 400——恰好命中问题清单组4#4/#5 两条 A 级 | signature / redacted data 进 `extra` 保留，`_render_block` 原样渲染回。`TestThinkingSignature` 2 项 |
+
+同批能力补齐（原 LIMITATIONS #2/#3，均配回归测试）：
+
+- **工具调用 ID 双向持久映射**（问题清单组4#3）：`src/state/idmap.py`——会话级 canonical ↔ 各协议外部形式，SQLite 持久、铸造稳定、会话间隔离；网关 to_ir 后归一、from_ir 前翻译、落库前翻回 canonical。`TestToolIdMap` 5 项（含 Anthropic→Chat→Anthropic 还原、并发分叉不串号）
+- **状态层重放保留结构化块**：`base.assistant_from_upstream()` 保留 thinking（signature/redacted）与 tool_use（含解析后 tool_input）入历史，取代只取文本的 `_assistant_message`。`TestAssistantFromUpstream` 4 项
+
+测试 25 → **40 项全过** + 11 项端到端冒烟全过。
 
 ## 六、已知缺口（修复后剩余）
 

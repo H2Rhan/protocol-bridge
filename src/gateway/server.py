@@ -18,7 +18,7 @@ import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from ..adapters.base import Dropped
+from ..adapters.base import Dropped, assistant_from_upstream
 from ..adapters.chat import ChatAdapter
 from ..adapters.response import ResponseAdapter
 from ..adapters.anthropic import AnthropicAdapter
@@ -166,6 +166,17 @@ def convert(source: str, target: str, payload: dict, headers: dict):
     if session is None and target in ("anthropic", "openai_response"):
         session = STORE.get_or_create(CFG.session_key(headers))
 
+    # v1.4 工具 ID 双向映射（问题清单组4#3，需会话作用域；无会话则直通）：
+    # 先把本轮新消息里的外部 ID 归一到 canonical（重放历史落库时已是 canonical），
+    # 渲染前再统一翻成目标协议的外部形式——Anthropic→Chat→Anthropic 一圈回来，
+    # 最初的 toolu_* 能原样还原，上游 tool_use_id 对应关系校验不会 400。
+    if session is not None:
+        idm = STORE.idmap
+        for m in req.messages:
+            for b in m.blocks:
+                if b.kind in (ir.TOOL_USE, ir.TOOL_RESULT) and b.tool_id:
+                    b.tool_id = idm.incoming(session.key, b.tool_id, source)
+
     # Anthropic 目标：按 L2 断点布局打 cache_control
     ctx = None
     if target == "anthropic":
@@ -173,6 +184,13 @@ def convert(source: str, target: str, payload: dict, headers: dict):
 
     # 记忆注入：重放之后、渲染之前（注入内容进 system 尾部，吃 system 后断点）
     injected = inject_memories(req, session) if session else 0
+
+    if session is not None:
+        idm = STORE.idmap
+        for m in req.messages:
+            for b in m.blocks:
+                if b.kind in (ir.TOOL_USE, ir.TOOL_RESULT) and b.tool_id:
+                    b.tool_id = idm.outgoing(session.key, b.tool_id, target)
 
     out = dst.from_ir(req, dropped, ctx) if target == "anthropic" else dst.from_ir(req, dropped)
     return out, req, dropped, session, injected, replayed
@@ -295,10 +313,18 @@ class Handler(BaseHTTPRequestHandler):
             # 整个状态层等于空转（历史永远是空 -> 重放永远是空 -> 多轮链路第一轮就断）。
             # 只追加本轮新消息：重放切片已在历史里，再加一次会自我复制。
             new_turn = list(req.messages[len(replayed_hist):])
-            reply = _assistant_message(target, backend_resp)
+            reply = assistant_from_upstream(target, backend_resp)
             if reply is not None:
                 new_turn.append(reply)
             if new_turn:
+                # 落库前把 ID 翻回 canonical：new_turn 里的 ID 刚被 outgoing
+                # 翻成目标协议形式，reply 里的是上游新生成的——历史必须存
+                # canonical，否则跨协议续轮时映射链会退化。
+                idm = STORE.idmap
+                for m in new_turn:
+                    for b in m.blocks:
+                        if b.kind in (ir.TOOL_USE, ir.TOOL_RESULT) and b.tool_id:
+                            b.tool_id = idm.incoming(session.key, b.tool_id, target)
                 STORE.append(session, new_turn)
             rid = STORE.record_response(session)
 
@@ -315,32 +341,6 @@ class Handler(BaseHTTPRequestHandler):
                            "warmup": warmup,
                            "replayed_messages": len(replayed_hist)}
         self._json(200, body)
-
-
-def _assistant_message(target: str, resp: dict):
-    """上游响应 -> IR assistant 消息（只取文本，够状态层重放用）。
-
-    只取文本是有意为之：工具调用 / 思考块的重放在当前实验范围内不涉及
-    （方案 3.8 不做复杂块重放）。但文本必须进历史，否则下一轮重放是无源之水。
-    """
-    if target == "anthropic":
-        texts = [b.get("text", "") for b in resp.get("content", []) or []
-                 if isinstance(b, dict) and b.get("type") == "text"]
-    elif target == "openai_response":
-        texts = []
-        for item in resp.get("output", []) or []:
-            if not isinstance(item, dict) or item.get("type") != "message":
-                continue
-            for c in item.get("content", []) or []:
-                if isinstance(c, dict) and c.get("type") in ("output_text", "text"):
-                    texts.append(c.get("text", ""))
-    else:  # openai_chat
-        try:
-            texts = [resp["choices"][0]["message"].get("content") or ""]
-        except (KeyError, IndexError, TypeError, AttributeError):
-            texts = []
-    text = "".join(texts).strip()
-    return ir.Message.text("assistant", text) if text else None
 
 
 def _usage_for(target: str, resp: dict) -> ir.IRUsage:
