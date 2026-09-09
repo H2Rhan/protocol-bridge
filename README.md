@@ -21,7 +21,7 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | 状态层（SQLite 持久化）+ 可切换 Session 配置 | ✅ v1.1 | `src/state/` + `config/session.json`，重启不丢（`TestStateLayer`） |
 | 三对 adapter（字段映射） | ✅ 离线 | `src/adapters/`，录制样例可测（`TestAdapterRoundTrip`） |
 | 网关转发 | ✅ 离线（mock）/ Groq 真实链路已验证 | `src/gateway/`；E29 真实端点对账 |
-| SSE 流式 | ◐ **v1.6 部分逐块**（chat 客户端 ← anthropic 上游） | `src/gateway/sse.py` 逐块转换（冒烟实测 30.7ms 逐块到达）；其余方向整读透传 → `docs/LIMITATIONS.md` #1；E21 证明流式无损命中率 |
+| SSE 流式 | ◐ **v1.7 三方向逐块**（chat←anthropic 转换 + 同协议透传） | `src/gateway/sse.py`；未实现方向显式 501 → `docs/LIMITATIONS.md` #1；E21 证明流式无损命中率 |
 | 记忆注入（幂等去重 + memory_cap） | ✅ v1.1 新增 | `inject_memories` + `TestGatewayPolicies`；管理口 `/v1/admin/session/meta` |
 | 工具调用全链路（含 ID 双向映射） | ✅ **v1.4** | 跨协议参数/签名不丢（`TestCrossProtocolToolArgs`/`TestThinkingSignature`）；`src/state/idmap.py` 会话级映射（`TestToolIdMap`） |
 | 状态层重放（结构化块） | ✅ **v1.4** | thinking（signature/redacted）与 tool_use 入历史（`TestAssistantFromUpstream`） |
@@ -39,8 +39,8 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 
 ```bash
 # 零外部依赖（仅标准库），Python 3.11+
-python -m unittest tests.test_offline -v   # 53 项离线单测：IR 往返 / adapter / 状态层 / 预热 / 三轮自查回归 / 多轮链 E2E / ID 映射 / property-based / 惰性淘汰 / SSE 转换
-python tools/smoke_e2e.py                  # 18 项端到端冒烟：真起 mock+网关子进程，6 组链路断言（含 SSE 逐块流式）
+python -m unittest tests.test_offline -v   # 56 项离线单测：IR 往返 / adapter / 状态层 / 预热 / 三轮自查回归 / 多轮链 E2E / ID 映射 / property-based / 惰性淘汰 / SSE 转换与透传
+python tools/smoke_e2e.py                  # 25 项端到端冒烟：真起 mock+网关子进程，7 组链路断言（含 SSE 转换/透传/501）
 python tools/mock_backend.py               # 起 mock backend（127.0.0.1:9100，按端点返回三种协议形状）
 python -m src.gateway.server               # 起网关（转发到 mock）
 python experiments/run_experiments.py --dry-run   # 实验框架 dry-run（不真实调 API）
@@ -95,7 +95,7 @@ src/
   ir/            IR 数据模型（L0/L1/L2）
   adapters/      chat / response / anthropic 三对 adapter
   state/         会话表 + TTL + session 配置 + build_prefix
-  gateway/       HTTP 转发 + SSE 逐块转换（chat←anthropic 已实现 sse.py，其余方向整读透传见 docs/LIMITATIONS.md #1）
+  gateway/       HTTP 转发 + SSE 流式（chat←anthropic 逐块转换 + 同协议透传；未实现方向 501，见 docs/LIMITATIONS.md #1）
   observability/ 命中率埋点（5 项暴露）
   warmup/        max_tokens:0 预热
   webui/         弹网页本地仪表盘（安全骨架 + 记忆编排界面）

@@ -207,6 +207,54 @@ def main() -> int:
                   json.dumps(last, ensure_ascii=False)[:120])
         except Exception as e:
             check("流式轮照常进埋点", False, f"{type(e).__name__}: {e}")
+
+        print("\n7) SSE 直通流式（同协议透传，v1.7）+ 未实现方向显式 501")
+        # 7a anthropic -> anthropic：字节透传，客户端收到原样 Anthropic 事件
+        fa, ta = post_stream("/v1/anthropic/to/anthropic",
+                             {"model": "mock", "stream": True, "max_tokens": 64,
+                              "messages": [{"role": "user", "content": "hi"}]})
+        deltas = []
+        for f in fa:
+            try:
+                d = json.loads(f)
+            except ValueError:
+                continue
+            if d.get("type") == "content_block_delta":
+                deltas.append(d.get("delta", {}).get("text", ""))
+        check("anthropic 透传文本拼合完整",
+              "".join(deltas) == "mock stream reply", repr("".join(deltas)))
+        check("anthropic 透传收到 message_stop",
+              any("message_stop" in f for f in fa))
+        spread_a = (ta[-1] - ta[0]) if len(ta) >= 2 else 0
+        check("anthropic 透传逐块到达", spread_a >= 0.015,
+              f"首尾间隔 {spread_a*1000:.1f}ms")
+        # 7b chat -> chat：字节透传，客户端收到原样 Chat chunk
+        fb, tb = post_stream("/v1/openai_chat/to/openai_chat",
+                             {"model": "mock", "stream": True,
+                              "messages": [{"role": "user", "content": "hi"}]})
+        chunks_b = []
+        for f in fb:
+            if f == "[DONE]":
+                continue
+            try:
+                chunks_b.append(json.loads(f))
+            except ValueError:
+                pass
+        text_b = "".join(c["choices"][0]["delta"].get("content", "")
+                         for c in chunks_b)
+        check("chat 透传文本拼合完整", text_b == "mock stream reply", repr(text_b))
+        check("chat 透传以 [DONE] 收尾", bool(fb) and fb[-1] == "[DONE]")
+        spread_b = (tb[-1] - tb[0]) if len(tb) >= 2 else 0
+        check("chat 透传逐块到达", spread_b >= 0.015,
+              f"首尾间隔 {spread_b*1000:.1f}ms")
+        # 7c 未实现的流式方向：显式 501（此前是 post_json 把 SSE 当 JSON 解析炸成 502）
+        try:
+            post("/v1/openai_response/to/anthropic",
+                 {"model": "mock", "stream": True,
+                  "input": [{"type": "message", "role": "user", "content": "hi"}]})
+            check("未实现流式方向显式 501", False, "请求通过了")
+        except urllib.error.HTTPError as e:
+            check("未实现流式方向显式 501", e.code == 501, f"HTTP {e.code}")
     finally:
         stop(tmp)
 

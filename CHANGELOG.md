@@ -68,3 +68,11 @@
 - mock：Anthropic 路径发完整官方事件序列（message_start 带 usage 与缓存字段 → content_block_* → message_delta → message_stop）
 - 测试：`TestSseConversion` 7 项单测（分帧容错 / 即时下发 / 参数缓冲 / stop_reason 映射 / usage 合并 / 错误帧）；冒烟第 6 组 7 项（**实测首尾帧间隔 30.7ms，证明逐块到达非整读补吐** + 流式轮照常进埋点）。53 项单测 + 18 项冒烟全过
 - 文档：LIMITATIONS #1 标「部分闭环」（其余方向与 dropped 可见性写明）；README SSE 行与测试口径同步；REVIEW 网关文件清单补 sse.py
+
+## 2026-09-09 · v1.7 同协议直通流式 + 未实现方向显式 501（本提交）
+
+- **直通流式**（chat←chat / anthropic←anthropic）：`tee_lines` 三通逐行透传（字节不动、即时 flush），旁路收集器攒流尾汇总——anthropic 方向复用 `AnthropicToChatStream`（帧丢弃只取 usage/文本），chat 方向新增 `ChatStreamCollector`（工具槽位拼接、脏数据容错）；落库/埋点仍走 `finalize_turn` 单一路径
+- **隐藏 bug 修复**：此前**任何** stream:true 请求落到未实现方向，`post_json` 会把 SSE 当 JSON 解析、炸成语焉不详的 502；现改为显式 **501**（附已支持方向清单，提示改用 stream:false）
+- 客户端中途断开：已收到的部分照常落账（费用已实际发生）
+- mock：`/chat/completions` 路径发 Chat 形状 chunk（role 首帧 + finish + usage + [DONE]）
+- 测试：`TestChatStreamCollector` 3 项单测；冒烟第 7 组 7 项（两个透传方向文本拼合 / 逐块到达 ~31ms / [DONE] / 501）。56 项单测 + 25 项冒烟全过

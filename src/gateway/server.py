@@ -338,12 +338,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": {"message": werr,
                                                   "type": "invalid_request_error"}})
 
-        # SSE 逐块流式（LIMITATIONS #1 最小闭环）：仅 chat 客户端 ← anthropic 上游。
-        # 其余方向保持整读透传。warmup+stream 已在上方被 validate_warmup 拦截，
-        # 走到这里的一定不是预热轮。
-        if out.get("stream") and source == "openai_chat" and target == "anthropic":
-            return self._stream_from_anthropic(out, req, dropped, session,
-                                               replayed_hist)
+        # SSE 逐块流式（LIMITATIONS #1）：
+        #   chat 客户端 ← anthropic 上游 —— 逐块转换（v1.6）
+        #   同协议直通（chat←chat / anthropic←anthropic）—— 字节透传 + 旁路收集（v1.7）
+        # 其余方向（response 源三维寻址 / anthropic←chat 等）未实现：
+        # 显式 501——否则 post_json 会把 SSE 当 JSON 解析，炸成语焉不详的 502。
+        # warmup+stream 已在上方被 validate_warmup 拦截，走到这里的一定不是预热轮。
+        if out.get("stream"):
+            if source == "openai_chat" and target == "anthropic":
+                return self._stream_from_anthropic(out, req, dropped, session,
+                                                   replayed_hist)
+            if source == target and source in ("openai_chat", "anthropic"):
+                return self._stream_passthrough(out, req, dropped, session,
+                                                replayed_hist, target)
+            return self._json(501, {"error": {
+                "message": f"暂不支持 {source} -> {target} 方向的流式；请改用 stream:false",
+                "type": "invalid_request_error",
+                "supported_streaming": ["openai_chat->anthropic",
+                                        "openai_chat->openai_chat",
+                                        "anthropic->anthropic"]}})
 
         # mock 与真实后端走同一套端点映射。tools/mock_backend.py 已按端点路径
         # 返回对应协议形状，不再为 mock 特判——否则离线跑的和上线跑的不是同一条路径，
@@ -426,6 +439,61 @@ class Handler(BaseHTTPRequestHandler):
         # dropped 清单对流式客户端不可见（SSE 帧里没有它的位置）——
         # 已写进 LIMITATIONS #1 的范围说明，埋点里 degradation 仍如实记录。
         finalize_turn("anthropic", conv.synthetic_response(), req, dropped,
+                      session, replayed_hist, warmup=False)
+
+    def _stream_passthrough(self, out: dict, req, dropped, session,
+                            replayed_hist: list, target: str):
+        """同协议直通流式（v1.7）：字节原样透传，旁路收集流尾汇总。
+
+        与转换流式的差别：转发的是上游**原始行**（一个比特都不动），
+        收集器只负责把 usage / 文本攒下来供 finalize_turn 复用。
+        """
+        from .sse import (AnthropicToChatStream, ChatStreamCollector,
+                          parse_sse_lines, tee_lines)
+
+        path = BACKEND_PATH.get(target, self.path)
+        with _GATE:
+            try:
+                resp = open_stream(BACKEND_URL + path, out, target)
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", "replace")[:500]
+                return self._json(int(e.code), {
+                    "error": {"message": "backend error", "type": "upstream_error",
+                              "status": int(e.code), "detail": detail}})
+            except Exception as e:
+                return self._json(502, {
+                    "error": {"message": f"backend unreachable: {e}",
+                              "type": "upstream_error"}})
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+            collector = (AnthropicToChatStream() if target == "anthropic"
+                         else ChatStreamCollector())
+            try:
+                if target == "anthropic":
+                    # 复用转换器做汇总（其产出的 Chat 帧丢弃，只要 usage/文本）
+                    for event, data in parse_sse_lines(
+                            tee_lines(resp, self.wfile)):
+                        collector.feed(event, data)
+                else:  # openai_chat
+                    for raw in tee_lines(resp, self.wfile):
+                        line = (raw.decode("utf-8", "replace")
+                                if isinstance(raw, (bytes, bytearray)) else raw)
+                        line = line.strip()
+                        if line.startswith("data:"):
+                            collector.feed_data(line[len("data:"):])
+            except (ConnectionError, BrokenPipeError, OSError):
+                # 客户端中途断开：用已收到的部分照常落账（费用已实际发生）
+                pass
+            finally:
+                resp.close()
+
+        finalize_turn(target, collector.synthetic_response(), req, dropped,
                       session, replayed_hist, warmup=False)
 
 
