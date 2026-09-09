@@ -1,7 +1,7 @@
 # 代码评审材料（Code Review Pack）
 
 > 版本 v1.2（2026-09-02）｜ src 1493 行 + tools/experiments/tests 1065 行（纯标准库，零第三方依赖，Python 3.11+）
-> 测试：**40 项单测全过 + 11 项端到端冒烟全过**（2026-09-09，含第三轮自查回归）+ Groq 真实链路验证通过（2026-09-01）
+> 测试：**44 项单测全过 + 11 项端到端冒烟全过**（2026-09-09，含第三轮自查回归 + property-based 性质测试）+ Groq 真实链路验证通过（2026-09-01）
 > 本版差异：**两轮代码自查发现 9 个真实 bug，全部修复并各配回归测试**（见第六节）
 
 ## 一、整体架构（IR 星型）
@@ -112,7 +112,7 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | `verify_cache.py` | 152 | **验站脚本**：唯一随机 run_id 前缀两步验证（预热看 creation → 复发看 read）；PASS/PARTIAL/FAIL；`max_tokens:0` 被拒自动降级 1 |
 | `smoke_e2e.py` | 164 | **v1.2 新增**：端到端冒烟——真起 mock + 网关两个子进程，跑 5 组 11 项断言（直通/跨协议/多轮链/预热/非法路由），退出码 0/1 |
 
-### tests/ —— 测试（25 项全过）
+### tests/ —— 测试（44 项全过）
 
 | 测试类 | 覆盖 |
 | ------ | ---- |
@@ -123,12 +123,17 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | `TestGatewayPolicies` | 预热四类拒绝、记忆注入去重+cap+cap 三级生效 |
 | `TestAuditFindings` | **v1.2 新增**：9 条自查回归测试（见第六节），每条对应一个修过的 bug |
 | `TestStatefulChainE2E` | **v1.2 新增**：真起网关+mock 的多轮 prev_id 链路（0→2→4 条重放累积）、预热轮不进响应链 |
+| `TestCrossProtocolToolArgs` | **v1.4 新增**：跨协议工具参数守恒（bug #10 回归） |
+| `TestThinkingSignature` | **v1.4 新增**：thinking signature / redacted 往返（bug #11 回归） |
+| `TestToolIdMap` | **v1.4 新增**：工具 ID 双向映射（含 Anthropic→Chat→Anthropic 还原、并发分叉不串号） |
+| `TestAssistantFromUpstream` | **v1.4 新增**：状态层重放保留 thinking / tool_use 结构化块 |
+| `TestPropertyRoundTrip` | **v1.4 新增**：property-based 往返（440 随机用例、固定种子可复现）：断点恒在 [3,4] / 未知字段必降级 / 工具参数守恒 / signature 守恒 |
 
 ## 四、已验证记录
 
 | 验证 | 结果 | 日期 |
 | ---- | ---- | ---- |
-| 25 项单测（`-W error::ResourceWarning` 下零警告） | ✅ 全过 | 2026-09-02 |
+| 44 项单测（`-W error::ResourceWarning` 下零警告，含第三轮自查回归 + property-based） | ✅ 全过 | 2026-09-09 |
 | 11 项端到端冒烟（子进程级，`tools/smoke_e2e.py`） | ✅ 全过 | 2026-09-02 |
 | 多轮 previous_response_id 链路（0→2→4 条重放） | ✅ 修复后通过 | 2026-09-02 |
 | Groq 真实链路（Chat 直通 + Responses→Chat + usage 归一 + 埋点） | ✅ | 2026-09-01 |
@@ -186,7 +191,7 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 - **工具调用 ID 双向持久映射**（问题清单组4#3）：`src/state/idmap.py`——会话级 canonical ↔ 各协议外部形式，SQLite 持久、铸造稳定、会话间隔离；网关 to_ir 后归一、from_ir 前翻译、落库前翻回 canonical。`TestToolIdMap` 5 项（含 Anthropic→Chat→Anthropic 还原、并发分叉不串号）
 - **状态层重放保留结构化块**：`base.assistant_from_upstream()` 保留 thinking（signature/redacted）与 tool_use（含解析后 tool_input）入历史，取代只取文本的 `_assistant_message`。`TestAssistantFromUpstream` 4 项
 
-测试 25 → **40 项全过** + 11 项端到端冒烟全过。
+测试 25 → **40 项全过** + 11 项端到端冒烟全过。（其后的 property-based 提交再增至 **44 项**，见 CHANGELOG 2026-09-09 末节。）
 
 ## 六、已知缺口（修复后剩余）
 
