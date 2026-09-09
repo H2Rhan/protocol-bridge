@@ -1,5 +1,10 @@
 # protocol-bridge
 
+[![test](https://github.com/H2Rhan/protocol-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/H2Rhan/protocol-bridge/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![deps](https://img.shields.io/badge/deps-stdlib%20only-brightgreen)
+
 犀牛鸟开源实战 · TRACK 05A/05B 协议转换组
 
 OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 + 独立状态层）。
@@ -26,7 +31,7 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | max_tokens:0 预热路径 | ✅ 实测有效 | 录制样例测 + 实测预热后 100% 命中（exp17） |
 | **两轮代码自查（9 bug 修复 + 回归测试）** | ✅ **v1.2 新增** | 含 3 个严重项，各配回归测试（`TestAuditFindings`），见 `docs/REVIEW.md` 第五节 |
 | 三组对照实验 | ✅ 34 组全量实测 | `docs/experiment-results.md`（含第〇节证伪条件预登记） |
-| TRACK04 签字确认稿 | ✅ v1.1 新增 | `docs/TRACK04_签字确认稿.md`，分工会直接签 |
+| TRACK04 边界参数对齐稿 | ✅ 已对齐 | `docs/TRACK04_签字确认稿.md`（single_task 等三参数已定稿） |
 | 弹网页（本地仪表盘） | ✅ 记忆编排界面 | `src/webui/` 安全骨架 + 记忆勾选/裁剪 + 缓存前缀可视化 |
 | 已知限制（边界自觉） | 📋 12 项四要素 | `docs/LIMITATIONS.md`（含结论隔离证明） |
 
@@ -58,7 +63,7 @@ python -m src.gateway.server
 - Anthropic 目标需 Anthropic 协议端点（Groq 无 `/v1/messages`）；网关自动带 `anthropic-version` 头（`PB_ANTHROPIC_VERSION` 可覆盖）。
 - 接 Anthropic 端点调试缓存链路前，先跑验站脚本确认透传（PASS 才可用）：
   `python tools/verify_cache.py --base https://<端点域名> --model <模型> --key <key>`
-  正式实验数据口径（共享账号缓存污染与缓解）见方案 v3.1 §3.6.1。
+  正式实验数据口径（缓存污染与缓解：唯一 run_id 前缀隔离）见 `docs/experiment-results.md` 第七节「方法学与踩坑」第 1 条。
 
 ## 设计要点（对应执行方案 v3）
 

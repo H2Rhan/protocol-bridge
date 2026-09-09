@@ -1,7 +1,7 @@
 # IR v0 · 中间表示契约（冻结）
 
 > 本文件是 05A（Chat）、05B（Response）、Anthropic 三方的**唯一契约**。
-> IR 一冻结，05A 与 05B 即可并行开发。修改需双方共同签字。
+> IR 一冻结，05A 与 05B 即可并行开发。修改须经双方确认并记入文末变更记录。
 > 数据日期：2026-09-01。
 
 三个协议各写两个方向：`to_ir`（协议 → IR）与 `from_ir`（IR → 协议）。
@@ -100,9 +100,3 @@ bp_after_tools / bp_after_system / bp_after_history_static / bp_rolling_tail
 | v0 | 2026-09-01 | 三层契约定稿（本文件） | 语义层冻结 |
 | v0.1 | 2026-09-05 | 实现层修订：落地第 4 个固定断点 `bp_after_history_static`；三 adapter 顶层字段统一 `record_unknown()` 收口；thinking/tool_choice 经 `extra` 透传。**L0/L1 语义未动** | 实现层（各配回归测试，见 REVIEW.md 第五节） |
 | v0.2 | 2026-09-09 | 删除对「20-block 回看窗口」的引用——该约束已被本组实验决定性证伪（exp5/7/11：60 块 10872 token 仍 100% 命中，见 experiment-results.md 第三节） | 文档修订（契约字段未动） |
-
-## 签字
-
-- 05A（Chat）：＿＿＿
-- 05B（Response）：＿＿＿
-- 日期：2026-09-01
