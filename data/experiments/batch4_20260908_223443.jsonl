@@ -1,0 +1,15 @@
+{"exp": "P1_1bp", "breakpoints": 1, "hit_rate": 0.0, "err": null}
+{"exp": "P2_2bp", "breakpoints": 2, "hit_rate": 0.6635, "err": null}
+{"exp": "P3_4bp", "breakpoints": 4, "hit_rate": 0.8316, "err": null}
+{"exp": "P4_5bp", "breakpoints": 5, "hit_rate": null, "err": "HTTP 400: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"A maximum of 4 blocks with cache_control may be provided. Found 5.\",\"error_type\":\"invalid_req"}
+{"exp": "M_500", "size": 500, "cached": 0, "hit_rate": 0.0, "cost": 0.00568}
+{"exp": "M_1000", "size": 1000, "cached": 1174, "hit_rate": 0.6616, "cost": 0.00541}
+{"exp": "M_2000", "size": 2000, "cached": 2323, "hit_rate": 0.6641, "cost": 0.01041}
+{"exp": "M_4000", "size": 4000, "cached": 4628, "hit_rate": 0.6654, "cost": 0.02044}
+{"exp": "M_8000", "size": 8000, "cached": 9240, "hit_rate": 0.666, "cost": 0.0405}
+{"exp": "O1_fixed", "hit_rate": 0.7476}
+{"exp": "O2_shuffled", "hit_rate": 0.2492}
+{"exp": "OP_10000", "size": 10000, "round": 1, "cr": 0, "cc": 0, "ti": 0}
+{"exp": "OP_10000", "size": 10000, "round": 2, "cr": 0, "cc": 0, "ti": 0}
+{"exp": "OP_20000", "size": 20000, "round": 1, "cr": 0, "cc": 0, "ti": 0}
+{"exp": "OP_20000", "size": 20000, "round": 2, "cr": 0, "cc": 0, "ti": 0}

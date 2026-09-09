@@ -1,0 +1,4 @@
+{"exp": "E21", "case": "nonstream_build", "cr": 0, "cc": 5942, "ti": 9}
+{"exp": "E21", "case": "nonstream_read", "cr": 5942, "cc": 0, "ti": 9, "hit": 0.9985}
+{"exp": "E21", "case": "stream_build", "cr": 5942, "cc": 0, "ti": 9}
+{"exp": "E21", "case": "stream_read", "cr": 5942, "cc": 0, "ti": 9, "hit": 0.9985}

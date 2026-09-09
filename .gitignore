@@ -4,7 +4,9 @@ __pycache__/
 *.pyo
 
 # 运行时产物（不入库）
-data/
+data/*
+!data/experiments/
+!data/README.md
 *.db
 metrics.jsonl
 experiments/report.json
