@@ -1,0 +1,25 @@
+{"exp": "LONG", "round": 1, "cr": 0, "cc": 9241, "ti": 9, "hit_rate": 0.0, "cost": 0.011585}
+{"exp": "LONG", "round": 2, "cr": 9241, "cc": 0, "ti": 20, "hit_rate": 0.9978, "cost": 0.000969}
+{"exp": "LONG", "round": 3, "cr": 9241, "cc": 0, "ti": 32, "hit_rate": 0.9965, "cost": 0.000986}
+{"exp": "LONG", "round": 4, "cr": 9241, "cc": 0, "ti": 44, "hit_rate": 0.9953, "cost": 0.000993}
+{"exp": "LONG", "round": 5, "cr": 9241, "cc": 0, "ti": 56, "hit_rate": 0.994, "cost": 0.00101}
+{"exp": "LONG", "round": 6, "cr": 9241, "cc": 0, "ti": 68, "hit_rate": 0.9927, "cost": 0.001017}
+{"exp": "LONG", "round": 7, "cr": 9241, "cc": 0, "ti": 80, "hit_rate": 0.9914, "cost": 0.001034}
+{"exp": "LONG", "round": 8, "cr": 9241, "cc": 0, "ti": 92, "hit_rate": 0.9901, "cost": 0.001041}
+{"exp": "LONG", "round": 9, "cr": 9241, "cc": 0, "ti": 104, "hit_rate": 0.9889, "cost": 0.001058}
+{"exp": "LONG", "round": 10, "cr": 9241, "cc": 0, "ti": 116, "hit_rate": 0.9876, "cost": 0.001065}
+{"exp": "LONG", "round": 11, "cr": 9241, "cc": 0, "ti": 127, "hit_rate": 0.9864, "cost": 0.001076}
+{"exp": "LONG", "round": 12, "cr": 9241, "cc": 0, "ti": 138, "hit_rate": 0.9853, "cost": 0.001087}
+{"exp": "LONG", "round": 13, "cr": 9241, "cc": 0, "ti": 150, "hit_rate": 0.984, "cost": 0.001104}
+{"exp": "LONG", "round": 14, "cr": 9241, "cc": 0, "ti": 162, "hit_rate": 0.9828, "cost": 0.001111}
+{"exp": "LONG", "round": 15, "cr": 9241, "cc": 0, "ti": 174, "hit_rate": 0.9815, "cost": 0.001128}
+{"exp": "LONG", "round": 16, "cr": 9241, "cc": 0, "ti": 186, "hit_rate": 0.9803, "cost": 0.001135}
+{"exp": "LONG", "round": 17, "cr": 9241, "cc": 0, "ti": 198, "hit_rate": 0.979, "cost": 0.001152}
+{"exp": "LONG", "round": 18, "cr": 9241, "cc": 0, "ti": 210, "hit_rate": 0.9778, "cost": 0.001159}
+{"exp": "LONG", "round": 19, "cr": 9241, "cc": 0, "ti": 222, "hit_rate": 0.9765, "cost": 0.001176}
+{"exp": "LONG", "round": 20, "cr": 9241, "cc": 0, "ti": 234, "hit_rate": 0.9753, "cost": 0.001183}
+{"exp": "WARMUP", "phase": "warmup", "cr": 0, "cc": 9240, "ti": 8}
+{"exp": "WARMUP", "phase": "正式1", "cr": 9240, "cc": 0, "ti": 9, "hit_rate": 0.999}
+{"exp": "WARMUP", "phase": "正式2", "cr": 9240, "cc": 0, "ti": 9, "hit_rate": 0.999}
+{"exp": "GAIN_LOCKED", "mode": "LOCKED", "rounds": 20, "hit_rate": 0.9372, "total_cost": 0.03207}
+{"exp": "GAIN_DYNAMIC", "mode": "DYNAMIC", "rounds": 20, "hit_rate": 0.0, "total_cost": 0.23406}

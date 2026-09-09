@@ -1,0 +1,38 @@
+{"exp": "E20", "case": "haiku_build", "cr": 0, "cc": 5942, "ti": 9}
+{"exp": "E20", "case": "sonnet_read", "cr": 0, "cc": 5943, "ti": 9}
+{"exp": "E20", "case": "sonnet_build", "cr": 0, "cc": 5941, "ti": 9}
+{"exp": "E20", "case": "haiku_read", "cr": 0, "cc": 5940, "ti": 9}
+{"exp": "E22", "case": "build", "cr": 0, "cc": 4993, "ti": 325}
+{"exp": "E22", "case": "same_tool_read", "cr": 4993, "cc": 0, "ti": 325, "hit": 0.9389}
+{"exp": "E22", "case": "renamed_tool", "cr": 0, "cc": 4995, "ti": 325, "hit": 0.0}
+{"exp": "E23", "case": "tok1024", "cr": 0, "cc": 0, "ti": 1237, "hit": 0.0}
+{"exp": "E23", "case": "tok2048", "cr": 0, "cc": 0, "ti": 2453, "hit": 0.0}
+{"exp": "E23", "case": "tok3000", "cr": 0, "cc": 0, "ti": 3581, "hit": 0.0}
+{"exp": "E23", "case": "tok3500", "cr": 4162, "cc": 0, "ti": 9, "hit": 0.9978}
+{"exp": "E23", "case": "tok4096", "cr": 4869, "cc": 0, "ti": 9, "hit": 0.9982}
+{"exp": "E23", "case": "tok4500", "cr": 5348, "cc": 0, "ti": 9, "hit": 0.9983}
+{"exp": "E23", "case": "tok5000", "cr": 5942, "cc": 0, "ti": 9, "hit": 0.9985}
+{"exp": "E23", "case": "tok6000", "cr": 7127, "cc": 0, "ti": 9, "hit": 0.9987}
+{"exp": "E24", "case": "sys_bp", "cr": 0, "cc": 5941, "ti": 9, "hit": 0.0}
+{"exp": "E24", "case": "sys_bp", "cr": 5941, "cc": 0, "ti": 9, "hit": 0.9985}
+{"exp": "E24", "case": "user_bp", "cr": 0, "cc": 5946, "ti": 3, "hit": 0.0}
+{"exp": "E24", "case": "user_bp", "cr": 5946, "cc": 0, "ti": 3, "hit": 0.9995}
+{"exp": "E25", "case": "build", "cr": 0, "cc": 5941, "ti": 9}
+{"exp": "E25", "case": "concurrent0", "cr": 5941, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E25", "case": "concurrent1", "cr": 5941, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E25", "case": "concurrent2", "cr": 5941, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E26", "case": "round1", "cr": 0, "cc": 5940, "ti": 82, "hit": 0.0}
+{"exp": "E26", "case": "round2", "cr": 5940, "cc": 0, "ti": 82, "hit": 0.9864}
+{"exp": "E26", "case": "round3", "cr": 5940, "cc": 0, "ti": 78, "hit": 0.987}
+{"exp": "E26", "case": "round4", "cr": 5940, "cc": 0, "ti": 81, "hit": 0.9865}
+{"exp": "E26", "case": "round5", "cr": 5940, "cc": 0, "ti": 80, "hit": 0.9867}
+{"exp": "E26", "case": "round6", "cr": 5940, "cc": 0, "ti": 80, "hit": 0.9867}
+{"exp": "E27", "case": "responses_backend", "cr": 0, "cc": 0, "ti": 0}
+{"exp": "E27", "case": "messages_backend_build", "cr": 0, "cc": 5942, "ti": 9}
+{"exp": "E27", "case": "messages_backend_read", "cr": 5942, "cc": 0, "ti": 9, "hit": 0.9985}
+{"exp": "E28", "case": "LOCKED_r1", "cr": 0, "cc": 5941, "ti": 8, "hit": 0.0}
+{"exp": "E28", "case": "LOCKED_r20", "cr": 5941, "cc": 0, "ti": 8, "hit": 0.9987}
+{"exp": "E28", "case": "DYNAMIC_r1", "cr": 0, "cc": 5947, "ti": 8, "hit": 0.0}
+{"exp": "E28", "case": "DYNAMIC_r20", "cr": 0, "cc": 5950, "ti": 8, "hit": 0.0}
+{"exp": "E28", "case": "summary", "locked_hit": 0.9488, "dynamic_hit": 0.0, "locked_cost": 0.020474, "dynamic_cost": 0.150488, "multiplier": 7.35}
+{"exp": "E29", "case": "method", "status": "待网关联调"}

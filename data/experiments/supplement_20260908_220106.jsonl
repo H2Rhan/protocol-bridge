@@ -1,0 +1,17 @@
+{"exp": "E1_anthropic", "path": "/v1/messages", "round": 1, "input_tokens": 9, "cache_read": 0, "cache_creation": 2972, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "E1_anthropic", "path": "/v1/messages", "round": 2, "input_tokens": 20, "cache_read": 2972, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9933}
+{"exp": "E1_anthropic", "path": "/v1/messages", "round": 3, "input_tokens": 32, "cache_read": 2972, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9893}
+{"exp": "E1_anthropic", "path": "/v1/messages", "round": 4, "input_tokens": 44, "cache_read": 2972, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9854}
+{"exp": "E2_openai", "path": "/v1/chat/completions", "round": 1, "input_tokens": null, "cache_read": null, "cache_creation": null, "prompt_tokens": 2981, "cached_tokens": 2972, "hit_rate": 0.997}
+{"exp": "E2_openai", "path": "/v1/chat/completions", "round": 2, "input_tokens": null, "cache_read": null, "cache_creation": null, "prompt_tokens": 2992, "cached_tokens": 2972, "hit_rate": 0.9933}
+{"exp": "E2_openai", "path": "/v1/chat/completions", "round": 3, "input_tokens": null, "cache_read": null, "cache_creation": null, "prompt_tokens": 3004, "cached_tokens": 2972, "hit_rate": 0.9893}
+{"exp": "E2_openai", "path": "/v1/chat/completions", "round": 4, "input_tokens": null, "cache_read": null, "cache_creation": null, "prompt_tokens": 3016, "cached_tokens": 2972, "hit_rate": 0.9854}
+{"exp": "H_10blk", "path": "/v1/messages", "round": 1, "n_blocks": 10, "input_tokens": 3, "cache_read": 0, "cache_creation": 1822, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_10blk", "path": "/v1/messages", "round": 2, "n_blocks": 10, "input_tokens": 3, "cache_read": 0, "cache_creation": 1852, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_10blk", "path": "/v1/messages", "round": 3, "n_blocks": 10, "input_tokens": 3, "cache_read": 0, "cache_creation": 1882, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_30blk", "path": "/v1/messages", "round": 1, "n_blocks": 30, "input_tokens": 3, "cache_read": 1821, "cache_creation": 3621, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.3344}
+{"exp": "H_30blk", "path": "/v1/messages", "round": 2, "n_blocks": 30, "input_tokens": 3, "cache_read": 0, "cache_creation": 5472, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_30blk", "path": "/v1/messages", "round": 3, "n_blocks": 30, "input_tokens": 3, "cache_read": 0, "cache_creation": 5502, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_60blk", "path": "/v1/messages", "round": 1, "n_blocks": 60, "input_tokens": 3, "cache_read": 0, "cache_creation": 10872, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_60blk", "path": "/v1/messages", "round": 2, "n_blocks": 60, "input_tokens": 3, "cache_read": 0, "cache_creation": 10902, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_60blk", "path": "/v1/messages", "round": 3, "n_blocks": 60, "input_tokens": 3, "cache_read": 0, "cache_creation": 10932, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}

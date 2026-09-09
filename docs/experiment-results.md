@@ -3,6 +3,7 @@
 > TRACK 05A/05B 协议转换组 · 实验实测报告（34 组）
 > 数据日期 2026-09-08 / 09-09 · 配套脚本见 `experiments/`（三组对照 + `rich_experiments.py` 覆盖实验 E20–E28 + 补充实验 E30–E34）
 > 实验在 **Anthropic Messages API 兼容端点** 上真实调用完成，命中率字段（`cache_creation_input_tokens` / `cache_read_input_tokens`）为真实返回。
+> **原始数据已入库**：逐轮 jsonl + 汇总 csv 见 `data/experiments/`，文件 → 实验编号溯源表见 `data/README.md`——本文档每个数字均可回查到具体文件的具体行。
 
 ---
 

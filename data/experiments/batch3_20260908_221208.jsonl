@@ -1,0 +1,45 @@
+{"exp": "R1_anthropic", "path": "/messages", "round": 1, "total_in": 2981, "cached": 0, "wrote": 2972, "hit_rate": 0.0}
+{"exp": "R1_anthropic", "path": "/messages", "round": 2, "total_in": 2981, "cached": 2972, "wrote": 0, "hit_rate": 0.997}
+{"exp": "R1_anthropic", "path": "/messages", "round": 3, "total_in": 2982, "cached": 2972, "wrote": 0, "hit_rate": 0.9966}
+{"exp": "R2_chat", "path": "/chat/completions", "round": 1, "total_in": 2981, "cached": 2972, "wrote": null, "hit_rate": 0.997}
+{"exp": "R2_chat", "path": "/chat/completions", "round": 2, "total_in": 2981, "cached": 2972, "wrote": null, "hit_rate": 0.997}
+{"exp": "R2_chat", "path": "/chat/completions", "round": 3, "total_in": 2982, "cached": 2972, "wrote": null, "hit_rate": 0.9966}
+{"exp": "R3_responses", "path": "/responses", "round": 1, "total_in": 2983, "cached": 0, "wrote": null, "hit_rate": 0.0}
+{"exp": "R3_responses", "path": "/responses", "round": 2, "total_in": 2983, "cached": 0, "wrote": null, "hit_rate": 0.0}
+{"exp": "R3_responses", "path": "/responses", "round": 3, "total_in": 2984, "cached": 0, "wrote": null, "hit_rate": 0.0}
+{"exp": "T_haiku-4.5", "model": "anthropic/claude-haiku-4.5", "size": 600, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "T_sonnet-4.6", "model": "anthropic/claude-sonnet-4.6", "size": 600, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "T_opus-5", "model": "anthropic/claude-opus-5", "size": 600, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "T_haiku-4.5", "model": "anthropic/claude-haiku-4.5", "size": 1200, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "T_sonnet-4.6", "model": "anthropic/claude-sonnet-4.6", "size": 1200, "cached": 1436, "wrote": 1436, "cached_ok": true}
+{"exp": "T_opus-5", "model": "anthropic/claude-opus-5", "size": 1200, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "T_haiku-4.5", "model": "anthropic/claude-haiku-4.5", "size": 2500, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "T_sonnet-4.6", "model": "anthropic/claude-sonnet-4.6", "size": 2500, "cached": 2972, "wrote": 2972, "cached_ok": true}
+{"exp": "T_opus-5", "model": "anthropic/claude-opus-5", "size": 2500, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "T_haiku-4.5", "model": "anthropic/claude-haiku-4.5", "size": 5000, "cached": 5936, "wrote": 5936, "cached_ok": true}
+{"exp": "T_sonnet-4.6", "model": "anthropic/claude-sonnet-4.6", "size": 5000, "cached": 5937, "wrote": 5937, "cached_ok": true}
+{"exp": "T_opus-5", "model": "anthropic/claude-opus-5", "size": 5000, "cached": 0, "wrote": 0, "cached_ok": false}
+{"exp": "N1", "every_n": 1, "round": 1, "version": 0, "cache_read": 0, "cache_creation": 2974, "hit_rate": 0.0}
+{"exp": "N1", "every_n": 1, "round": 2, "version": 1, "cache_read": 0, "cache_creation": 2974, "hit_rate": 0.0}
+{"exp": "N1", "every_n": 1, "round": 3, "version": 2, "cache_read": 0, "cache_creation": 2974, "hit_rate": 0.0}
+{"exp": "N1", "every_n": 1, "round": 4, "version": 3, "cache_read": 0, "cache_creation": 2974, "hit_rate": 0.0}
+{"exp": "N1", "every_n": 1, "round": 5, "version": 4, "cache_read": 0, "cache_creation": 2974, "hit_rate": 0.0}
+{"exp": "N1", "every_n": 1, "round": 6, "version": 5, "cache_read": 0, "cache_creation": 2974, "hit_rate": 0.0}
+{"exp": "N2", "every_n": 2, "round": 1, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N2", "every_n": 2, "round": 2, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N2", "every_n": 2, "round": 3, "version": 1, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.9966}
+{"exp": "N2", "every_n": 2, "round": 4, "version": 1, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N2", "every_n": 2, "round": 5, "version": 2, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.9966}
+{"exp": "N2", "every_n": 2, "round": 6, "version": 2, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N3", "every_n": 3, "round": 1, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N3", "every_n": 3, "round": 2, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N3", "every_n": 3, "round": 3, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.9966}
+{"exp": "N3", "every_n": 3, "round": 4, "version": 1, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N3", "every_n": 3, "round": 5, "version": 1, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.9966}
+{"exp": "N3", "every_n": 3, "round": 6, "version": 1, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N5", "every_n": 5, "round": 1, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N5", "every_n": 5, "round": 2, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N5", "every_n": 5, "round": 3, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.9966}
+{"exp": "N5", "every_n": 5, "round": 4, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}
+{"exp": "N5", "every_n": 5, "round": 5, "version": 0, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.9966}
+{"exp": "N5", "every_n": 5, "round": 6, "version": 1, "cache_read": 2974, "cache_creation": 0, "hit_rate": 0.997}

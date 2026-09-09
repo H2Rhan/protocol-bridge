@@ -1,0 +1,19 @@
+{"exp": "E32", "case": "N3_r1", "cc": 3, "cr": 0}
+{"exp": "E32", "case": "N3_r2", "cc": 3, "cr": 0}
+{"exp": "E32", "case": "N3_r3", "cc": 1, "cr": 2}
+{"exp": "E32", "case": "N3_r4", "cc": 2, "cr": 1}
+{"exp": "E32", "case": "N6_r1", "cc": 1, "cr": 5}
+{"exp": "E32", "case": "N6_r2", "cc": 5, "cr": 1}
+{"exp": "E32", "case": "N6_r3", "cc": 4, "cr": 2}
+{"exp": "E32", "case": "N6_r4", "cc": 2, "cr": 4}
+{"exp": "E32", "case": "N3_r1", "cc": 3, "cr": 0}
+{"exp": "E32", "case": "N3_r2", "cc": 3, "cr": 0}
+{"exp": "E32", "case": "N3_r3", "cc": 1, "cr": 2}
+{"exp": "E32", "case": "N3_r4", "cc": 2, "cr": 1}
+{"exp": "E32", "case": "N6_r1", "cc": 1, "cr": 5}
+{"exp": "E32", "case": "N6_r2", "cc": 5, "cr": 1}
+{"exp": "E32", "case": "N6_r3", "cc": 4, "cr": 2}
+{"exp": "E32", "case": "N6_r4", "cc": 2, "cr": 4}
+{"exp": "E33", "case": "hit_times", "values": [2.98, 3.096, 6.642, 2.769, 3.152]}
+{"exp": "E33", "case": "cold_times", "values": [5.246, 3.193, 5.711, 2.62, 4.747]}
+{"exp": "E33", "case": "summary", "hit_median": 3.096, "cold_median": 4.747, "hit_mean": 3.728, "cold_mean": 4.303}

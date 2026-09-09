@@ -1,0 +1,6 @@
+{"exp": "E34_opus", "case": "tok8000", "model": "anthropic/claude-opus-5", "actual_tokens": 0, "build_cc": 0, "reread_cr": 0}
+{"exp": "E34_opus", "case": "tok12000", "model": "anthropic/claude-opus-5", "actual_tokens": 0, "build_cc": 0, "reread_cr": 0}
+{"exp": "E34_opus", "case": "tok16000", "model": "anthropic/claude-opus-5", "actual_tokens": 0, "build_cc": 0, "reread_cr": 0}
+{"exp": "E34_opus", "case": "tok20000", "model": "anthropic/claude-opus-5", "actual_tokens": 0, "build_cc": 0, "reread_cr": 0}
+{"exp": "E34_haiku", "case": "tok10000", "model": "anthropic/claude-haiku-4.5", "actual_tokens": 7, "build_cc": 11863, "reread_cr": 11863}
+{"exp": "E34_haiku", "case": "tok20000", "model": "anthropic/claude-haiku-4.5", "actual_tokens": 7, "build_cc": 23711, "reread_cr": 23711}

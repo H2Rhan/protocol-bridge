@@ -103,6 +103,7 @@ config/          session.json（Session 边界可切换配置）
 experiments/     三组对照 + rich_experiments.py（E20–E28）+ rich_experiments2.py（E30–E34）
 tests/           离线单测（录制样例 + 自查回归 + 多轮链 E2E）
 tools/           mock_backend + verify_cache + smoke_e2e + recordings
+data/            34 组实验原始数据（逐轮 jsonl + 汇总 csv，溯源表见 data/README.md）
 docs/            ir-schema.md / capability-matrix.md / experiment-results.md / LIMITATIONS.md / REVIEW.md / TRACK04_签字确认稿.md
 CHANGELOG.md     按日期演进记录（v0 契约冻结 → v1.2 → 实验交付 → 覆盖补全）
 ```

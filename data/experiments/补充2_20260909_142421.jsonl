@@ -1,0 +1,24 @@
+{"exp": "E30", "case": "N1_req0", "cr": 0, "cc": 5941, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N3_req0", "cr": 5944, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N3_req1", "cr": 0, "cc": 5944, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N3_req2", "cr": 0, "cc": 5944, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N6_req0", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req1", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req2", "cr": 0, "cc": 5942, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N6_req3", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req4", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req5", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N1_req0", "cr": 0, "cc": 5941, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N3_req0", "cr": 5944, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N3_req1", "cr": 0, "cc": 5944, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N3_req2", "cr": 0, "cc": 5944, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N6_req0", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req1", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req2", "cr": 0, "cc": 5942, "ti": 10, "hit": 0.0}
+{"exp": "E30", "case": "N6_req3", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req4", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E30", "case": "N6_req5", "cr": 5942, "cc": 0, "ti": 10, "hit": 0.9983}
+{"exp": "E31", "case": "A_build", "cr": 0, "cc": 5944, "ti": 7}
+{"exp": "E31", "case": "A_same", "cr": 5944, "cc": 0, "ti": 7, "hit": 0.9988}
+{"exp": "E31", "case": "B_mutate1", "cr": 0, "cc": 5944, "ti": 7, "hit": 0.0}
+{"exp": "E31", "case": "C_tail_change", "cr": 5944, "cc": 0, "ti": 9, "hit": 0.9985}

@@ -1,0 +1,12 @@
+{"exp": "H_5blk", "path": "/v1/messages", "round": 1, "n_blocks": 5, "input_tokens": 920, "cache_read": 0, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_5blk", "path": "/v1/messages", "round": 2, "n_blocks": 5, "input_tokens": 920, "cache_read": 0, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_5blk", "path": "/v1/messages", "round": 3, "n_blocks": 5, "input_tokens": 920, "cache_read": 0, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.0}
+{"exp": "H_10blk", "path": "/v1/messages", "round": 1, "n_blocks": 10, "input_tokens": 3, "cache_read": 1822, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9984}
+{"exp": "H_10blk", "path": "/v1/messages", "round": 2, "n_blocks": 10, "input_tokens": 3, "cache_read": 1822, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9984}
+{"exp": "H_10blk", "path": "/v1/messages", "round": 3, "n_blocks": 10, "input_tokens": 3, "cache_read": 1822, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9984}
+{"exp": "H_30blk", "path": "/v1/messages", "round": 1, "n_blocks": 30, "input_tokens": 3, "cache_read": 5442, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9994}
+{"exp": "H_30blk", "path": "/v1/messages", "round": 2, "n_blocks": 30, "input_tokens": 3, "cache_read": 5442, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9994}
+{"exp": "H_30blk", "path": "/v1/messages", "round": 3, "n_blocks": 30, "input_tokens": 3, "cache_read": 5442, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9994}
+{"exp": "H_60blk", "path": "/v1/messages", "round": 1, "n_blocks": 60, "input_tokens": 3, "cache_read": 10872, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9997}
+{"exp": "H_60blk", "path": "/v1/messages", "round": 2, "n_blocks": 60, "input_tokens": 3, "cache_read": 10872, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9997}
+{"exp": "H_60blk", "path": "/v1/messages", "round": 3, "n_blocks": 60, "input_tokens": 3, "cache_read": 10872, "cache_creation": 0, "prompt_tokens": null, "cached_tokens": null, "hit_rate": 0.9997}
