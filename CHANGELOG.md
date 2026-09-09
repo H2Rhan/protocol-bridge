@@ -84,3 +84,10 @@
 - 差异清单（有意为之，见 ts/README.md）：不读系统代理（恒直连 ≡ Python 版 PB_DIRECT=1）、node:sqlite 实验警告、property 测试 PRNG 换 mulberry32（性质不变）；webui / verify_cache / experiments 未移植（后续 PR）
 - CI 加 `unittest-ts` job（typecheck + 单测 + 冒烟）；Python job 测试数口径同步 56/25
 - Python 版保留为参考实现；docs/ 契约与实验文档对两个实现同样适用
+
+## 2026-09-09 · v2.1 TS 补齐：webui 弹网页 + verify_cache 验站（本提交）
+
+- **`ts/src/webui/server.ts`**：弹网页仪表盘移植——安全骨架全量对齐（127.0.0.1 绑定 / 随机端口 / Host 头校验防 DNS rebinding / 一次性 token / 90s 超时兜底 / 默认脱敏）+ 记忆勾选裁剪经 saveCallback 回写 + 4 断点缓存前缀可视化；listen 异步等端口分配后再返回 URL
+- **`ts/tools/verify_cache.ts`**：验站脚本移植（两步验证 PASS/PARTIAL/FAIL + 降级 max_tokens:1 + 伪造缓存字段告警；恒直连，--use-proxy 为兼容 no-op）
+- TS 版新增 3 项测试（webui 安全校验×2 + verify 对 mock PASS×1）：**59 项单测全过** + 25 项冒烟全过 + typecheck 0 error
+- 至此 ts/ 与 Python 版的功能对齐仅剩 experiments/（研究脚本，跟随 Python 版即可）

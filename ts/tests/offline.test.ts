@@ -1069,3 +1069,86 @@ describe("TestChatStreamCollector", () => {
     assert.equal(synth.choices[0].message.content, "");
   });
 });
+
+// ---------------------------------------------------------------------------
+// TestWebuiDashboard（TS 版新增：弹网页安全骨架 + 编排回写）
+// ---------------------------------------------------------------------------
+
+describe("TestWebuiDashboard", () => {
+  test("Host 头与一次性 token 校验（防 DNS rebinding / 扫端口）", async () => {
+    const { openDashboard, TIMEOUT_S } = await import("../src/webui/server.ts");
+    assert.equal(TIMEOUT_S, 90); // 超时兜底区间 60-120s
+    const d = await openDashboard(
+      [{ layer: "L3", content: "偏好简洁明了的回答风格，不喜欢任何冗余解释与无关铺陈" }],
+      { openBrowser: false });
+    try {
+      // 无 token → 403
+      let resp = await fetch(`http://127.0.0.1:${d.port}/`);
+      assert.equal(resp.status, 403);
+      // 错误 Host（域名形式）→ 403（undici 禁改 Host，用裸 http.request）
+      const status = await new Promise<number>((resolve, reject) => {
+        const r = http.request({ host: "127.0.0.1", port: d.port, path: "/?t=x",
+                                 headers: { Host: `localhost:${d.port}` } },
+                                (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+        r.on("error", reject);
+        r.end();
+      });
+      assert.equal(status, 403);
+      // 正确 token + Host → 200，且页面含缓存前缀可视化与脱敏
+      resp = await fetch(d.url);
+      assert.equal(resp.status, 200);
+      const html = await resp.text();
+      assert.ok(html.includes("稳定前缀（吃缓存）"), "缺缓存前缀可视化");
+      assert.ok(html.includes("断点 4"), "缺滚动尾部断点说明");
+      assert.ok(html.includes("…[点开看全文]"), "长记忆未脱敏截断");
+    } finally {
+      d.close();
+    }
+  });
+
+  test("勾选提交经 saveCallback 回写；mask 脱敏", async () => {
+    const { openDashboard, mask } = await import("../src/webui/server.ts");
+    assert.equal(mask("短"), "短");
+    assert.ok(mask("x".repeat(30)).endsWith("…[点开看全文]"));
+    const mems = [{ layer: "L1", content: "记忆甲" }, { layer: "L3", content: "记忆乙" }];
+    const saved: ir.Json[][] = [];
+    const d = await openDashboard(mems, { openBrowser: false,
+                                          saveCallback: (sel) => saved.push(sel) });
+    try {
+      const resp = await fetch(`http://127.0.0.1:${d.port}/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `t=${encodeURIComponent(d.url.split("t=")[1])}&mem=1`,
+      });
+      assert.equal(resp.status, 200);
+      assert.equal(saved.length, 1);
+      assert.deepEqual(saved[0], [mems[1]], "只应回写勾选的 mem=1");
+    } finally {
+      d.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TestVerifyCacheOffline（TS 版新增：验站脚本对 mock 应 PASS）
+// ---------------------------------------------------------------------------
+
+describe("TestVerifyCacheOffline", () => {
+  test("对 mock 两步验证：写 creation>0 → 读 read>0 = PASS", async () => {
+    const { verifyCache } = await import("../tools/verify_cache.ts");
+    const srv = http.createServer((req, res) => { void mockHandler(req, res); });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const port = (srv.address() as { port: number }).port;
+    try {
+      const result = await verifyCache(`http://127.0.0.1:${port}`, "mock", "",
+                                       4500, () => {}, 10);
+      assert.ok(result !== null);
+      assert.equal(result.verdict, "PASS");
+      assert.ok(result.u1.cache_creation_input_tokens > 0);
+      assert.ok(result.u2.cache_read_input_tokens > 0);
+      assert.equal(result.forgedWarning, false);
+    } finally {
+      srv.close();
+    }
+  });
+});
