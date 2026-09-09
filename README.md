@@ -86,7 +86,7 @@ python -m src.gateway.server
 
 [TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) 的核心机制是「proxy 不改协议、每轮向上下文注入 L2/L3 记忆」——**本仓库的 34 组实验量化的正是这套机制的成本语义**：同一份记忆，锁死注入 vs 动态注入成本差 7.3×；低于模型阈值静默不缓存；断点布局直接决定前缀稳定性。
 
-可拆出提上游的方向：AgentMemory proxy 目前**没有 `cache_control` 断点布局与缓存命中率埋点**——本仓库的断点布局（3 固定 + 1 滚动）与 5 项埋点（E29 已与真实端点对账）可作为参考实现。
+可拆出提上游的方向（已核对上游源码，表述以其现状为准）：上游 MemoryProxy 对缓存断点是**被动保留**的——透传客户端已有的 `cache_control`（`injection/adapters/anthropic.ts`），注入记忆时**特意不加**断点（`session/context-injector.ts` 注释申明理由），usage 管道也已采集 `cache_read_input_tokens`（`credit-reporter.ts`，用于计费上报）。**上游缺的不是埋点字段，而是「注入方式 × 命中率」的量化依据与主动策略**：本仓库的 34 组实验数据（锁死 vs 动态 7.3×、确定性序列化 74.8% vs 24.9%、逐模型阈值表）+ 主动断点布局（3 固定 + 1 滚动）+ 确定性序列化流程，可作为上游注入策略的参考实现与决策依据。
 
 ## 目录
 
