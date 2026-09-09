@@ -19,10 +19,10 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 | 记忆注入（幂等去重 + memory_cap） | ✅ v1.1 新增 | `inject_memories`，管理口 `/v1/admin/session/meta` |
 | 预热拒绝条件校验 | ✅ v1.1 新增 | stream/thinking/structured outputs/tool_choice 四类冲突 400 |
 | 限流 | ✅ v1.1 新增 | `PB_CONCURRENCY`（默认 2） |
-| 命中率埋点（5 项暴露） | ✅ 框架 | injected 字段 v1.1 起真实统计；v1.2 起预热轮单列、多线程写加锁 |
+| 命中率埋点（5 项暴露） | ✅ 已实做对账 | v1.1 起真实统计、v1.2 预热轮单列/加锁；E29 实测埋点与 API usage 逐字段一致 |
 | max_tokens:0 预热路径 | ✅ 字段处理 | 用录制响应样例测 |
 | **两轮代码自查（9 bug 修复 + 回归测试）** | ✅ **v1.2 新增** | 含 3 个严重项（状态层空转 / 多轮链断 / prev_id 回传），见 `docs/REVIEW.md` 第五节 |
-| 三组对照实验 | ✅ 全量实测完成 | `experiments/`（含 `rich_experiments.py` 覆盖实验 E20–E28）；结果见 `docs/experiment-results.md` |
+| 三组对照实验 | ✅ 34 组全量实测 | `experiments/`（`rich_experiments.py` E20–E28 + `rich_experiments2.py` E30–E34）；结果见 `docs/experiment-results.md` |
 | TRACK04 签字确认稿 | ✅ v1.1 新增 | `docs/TRACK04_签字确认稿.md`，分工会直接签 |
 | 弹网页（本地仪表盘） | 🔜 骨架 | `src/webui/` 安全骨架 |
 
@@ -47,7 +47,7 @@ python -m src.gateway.server
 # 然后 POST http://127.0.0.1:8080/v1/{source}/to/{target}
 ```
 
-- 网关按 target 映射真实端点：`openai_chat→/chat/completions`、`openai_response→/responses`、`anthropic→/v1/messages`。
+- 网关按 target 映射真实端点：`openai_chat→/chat/completions`、`openai_response→/responses`、`anthropic→/v1/messages`。路径可经 `PB_CHAT_PATH` / `PB_RESPONSE_PATH` / `PB_ANTHROPIC_PATH` 覆盖——接 Anthropic 兼容端点（base 含 `/api/v1`）时 anthropic 需设 `PB_ANTHROPIC_PATH=/messages`，否则会拼出多一个 `/v1` 而 404。
 - 已用 Groq 验证：`openai_chat→openai_chat` 直通、`openai_response→openai_chat` 跨协议转换，
   真实 usage（prompt/completion/reasoning tokens）正常归一并写入 metrics jsonl。
 - ⚠️ 本机代理 `127.0.0.1:50403` 对 POST 隧道不稳，必须 `PB_DIRECT=1`；Cloudflare 按 UA 拦 bot，网关已带浏览器 UA。
@@ -66,11 +66,11 @@ python -m src.gateway.server
   用满官方 4 个 `cache_control` 上限。
 - **命中率北极星**：每轮暴露 5 项（命中率 / 注入 token / 重放 token / 丢弃参数 / 降级路径）。
 
-## 实验 API 与预算（见方案 3.6.1）
+## 实验（已完成，34 组）
 
-- 三组实验都必须真实 **Anthropic key**（命中率字段 mock 给不出）；**OpenAI key** 用于跨协议成本对比（用量少）。
-- 优先级：粒度、更新频率必做；位置组可降级（D2 视 Session 04 口径挂起）。
-- 省钱：低价档预演 → `max_tokens:0` 预热（零输出计费）→ `count_tokens` 免费端点校准。
+- 缓存命中率实测 **34 组**（exp1–19 三组对照 + E20–E28 覆盖 + E30–E34 进阶），量化取舍结论见 `docs/experiment-results.md`。
+- 核心结论：LOCKED vs DYNAMIC ≈ **7.3×**（跨模型一致）；命中比冷启动快 **~1.65s**；缓存按 provider 隔离、不跨模型复用；haiku-4.5 阈值 4096 token。
+- 配套脚本：`experiments/run_experiments.py`（三组对照）、`rich_experiments.py`（E20–E28）、`rich_experiments2.py`（E30–E34）。
 
 ## 目录
 
