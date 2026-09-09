@@ -5,6 +5,8 @@
 """
 import json
 import os
+import random
+import string
 import sys
 import threading
 import unittest
@@ -625,6 +627,162 @@ class TestToolIdMap(unittest.TestCase):
         self.idm.incoming("s1", "call_1", "openai_chat")
         self.idm.outgoing("s1", "call_1", "anthropic")
         self.assertEqual(self.idm.size("s1"), 2)
+
+
+class TestPropertyRoundTrip(unittest.TestCase):
+    """问题清单组5#10：property-based 往返测试（stdlib 实现，零三方依赖）。
+
+    与录制样例的例举式测试互补：固定种子生成随机请求，断言**性质**而非样例——
+    ① 断点数恒在 [3,4]；② 任何未知顶层字段必进降级记录（绝不静默丢弃）；
+    ③ 工具参数跨协议守恒；④ thinking signature 往返守恒。
+    种子固定 → 失败可用同一种子回放现场。
+    """
+
+    SEED = 20260909
+
+    def _rand_text(self, rng, n=40):
+        return "".join(rng.choice(string.ascii_letters + "中文测试字  ")
+                       for _ in range(rng.randint(1, n)))
+
+    # -- 随机 payload 生成 -------------------------------------------------
+    def _rand_chat_payload(self, rng):
+        msgs = [{"role": "system", "content": self._rand_text(rng)}]
+        for i in range(rng.randint(1, 6)):
+            role = "user" if i % 2 == 0 else "assistant"
+            m = {"role": role, "content": self._rand_text(rng)}
+            if role == "assistant" and rng.random() < 0.5:
+                m["tool_calls"] = [{
+                    "id": f"call_{rng.randint(0, 999)}", "type": "function",
+                    "function": {"name": "f", "arguments": json.dumps(
+                        {"k": rng.randint(0, 100), "s": self._rand_text(rng, 8)},
+                        ensure_ascii=False)}}]
+            msgs.append(m)
+        return {"model": "gpt-x", "messages": msgs,
+                "tools": [{"type": "function", "function": {
+                    "name": "f", "description": "d",
+                    "parameters": {"type": "object"}}}],
+                f"x_rand_{rng.randint(0, 999)}": rng.random(),
+                "logit_bias": {"1": 1}}
+
+    def _rand_anthropic_payload(self, rng):
+        msgs = []
+        for i in range(rng.randint(1, 5)):
+            role = "user" if i % 2 == 0 else "assistant"
+            content = [{"type": "text", "text": self._rand_text(rng)}]
+            if role == "assistant":
+                if rng.random() < 0.6:
+                    content.insert(0, {"type": "thinking",
+                                       "thinking": self._rand_text(rng),
+                                       "signature": f"sig_{rng.randint(0, 9999)}"})
+                if rng.random() < 0.5:
+                    content.append({"type": "tool_use",
+                                    "id": f"toolu_{rng.randint(0, 999)}",
+                                    "name": "f",
+                                    "input": {"v": rng.randint(0, 50)}})
+            msgs.append({"role": role, "content": content})
+        return {"model": "claude-x", "max_tokens": 128, "messages": msgs,
+                "tools": [{"name": "f", "description": "d",
+                           "input_schema": {"type": "object"}}],
+                f"x_rand_{rng.randint(0, 999)}": 1, "top_p": 0.9}
+
+    def _rand_response_payload(self, rng):
+        items = []
+        for i in range(rng.randint(1, 5)):
+            if i % 2 == 0:
+                items.append({"type": "message", "role": "user",
+                              "content": self._rand_text(rng)})
+            else:
+                items.append({"type": "message", "role": "assistant",
+                              "content": [{"type": "output_text",
+                                           "text": self._rand_text(rng)}]})
+                if rng.random() < 0.5:
+                    items.append({"type": "function_call", "name": "f",
+                                  "call_id": f"call_{rng.randint(0, 999)}",
+                                  "arguments": json.dumps(
+                                      {"v": rng.randint(0, 50)})})
+        return {"model": "gpt-x", "input": items,
+                f"x_rand_{rng.randint(0, 999)}": "x"}
+
+    # -- 性质断言 -----------------------------------------------------------
+    def test_property_chat_to_anthropic(self):
+        rng = random.Random(self.SEED)
+        for case in range(120):
+            p = self._rand_chat_payload(rng)
+            d1 = Dropped()
+            req = ChatAdapter().to_ir(p, d1)
+            # 性质②：未知顶层字段必降级（chat._KNOWN_TOP 之外一律在案）
+            known = {"model", "messages", "tools", "max_tokens",
+                     "max_completion_tokens", "temperature", "stream", "system"}
+            dropped_fields = {d["field"] for d in d1.items}
+            for k in p:
+                if k not in known:
+                    self.assertIn(k, dropped_fields,
+                                  f"case {case}: 未知字段 {k} 被静默丢弃")
+            # 性质①：断点上限
+            out = AnthropicAdapter().from_ir(req, Dropped(), ir.SessionContext())
+            bps = _count_breakpoints(out)
+            self.assertTrue(3 <= bps <= 4, f"case {case}: 断点数 {bps} 越界")
+            # 性质③：工具参数守恒（v1.4 修复的参数丢失正是这条性质被抓出来的）
+            src = [json.loads(tc["function"]["arguments"])
+                   for m in p["messages"] for tc in m.get("tool_calls", []) or []]
+            got = [b["input"] for m in out["messages"] for b in m["content"]
+                   if b.get("type") == "tool_use"]
+            self.assertEqual(src, got, f"case {case}: 工具参数跨协议变形")
+
+    def test_property_anthropic_to_chat(self):
+        rng = random.Random(self.SEED + 1)
+        for case in range(120):
+            p = self._rand_anthropic_payload(rng)
+            d1 = Dropped()
+            req = AnthropicAdapter().to_ir(p, d1)
+            known = {"model", "max_tokens", "temperature", "stream",
+                     "system", "messages", "tools", "thinking", "tool_choice"}
+            dropped_fields = {d["field"] for d in d1.items}
+            for k in p:
+                if k not in known:
+                    self.assertIn(k, dropped_fields,
+                                  f"case {case}: 未知字段 {k} 被静默丢弃")
+            out = ChatAdapter().from_ir(req, Dropped())
+            # 性质③：tool_use.input → arguments JSON 守恒
+            src_inputs = [b["input"] for m in p["messages"]
+                          for b in m["content"] if b.get("type") == "tool_use"]
+            got_args = [json.loads(tc["function"]["arguments"])
+                        for m in out["messages"]
+                        for tc in m.get("tool_calls", []) or []]
+            self.assertEqual(src_inputs, got_args,
+                             f"case {case}: Anthropic→Chat 参数变形")
+
+    def test_property_anthropic_signature_roundtrip(self):
+        rng = random.Random(self.SEED + 2)
+        for case in range(80):
+            p = self._rand_anthropic_payload(rng)
+            req = AnthropicAdapter().to_ir(p, Dropped())
+            out = AnthropicAdapter().from_ir(req, Dropped())
+            # 性质④：signature 有序守恒（多轮思考链的硬约束）
+            src_sigs = [b["signature"] for m in p["messages"]
+                        for b in m["content"] if b.get("type") == "thinking"]
+            got_sigs = [b.get("signature") for m in out["messages"]
+                        for b in m["content"] if b.get("type") == "thinking"]
+            self.assertEqual(src_sigs, got_sigs,
+                             f"case {case}: thinking signature 往返丢失")
+
+    def test_property_response_to_anthropic(self):
+        rng = random.Random(self.SEED + 3)
+        for case in range(100):
+            p = self._rand_response_payload(rng)
+            d1 = Dropped()
+            req = ResponseAdapter().to_ir(p, d1)
+            dropped_fields = {d["field"] for d in d1.items}
+            for k in p:
+                if k not in ("model", "input"):
+                    self.assertIn(k, dropped_fields,
+                                  f"case {case}: 未知字段 {k} 被静默丢弃")
+            out = AnthropicAdapter().from_ir(req, Dropped(), ir.SessionContext())
+            src = [json.loads(it["arguments"]) for it in p["input"]
+                   if it.get("type") == "function_call"]
+            got = [b["input"] for m in out["messages"] for b in m["content"]
+                   if b.get("type") == "tool_use"]
+            self.assertEqual(src, got, f"case {case}: Responses→Anthropic 参数变形")
 
 
 def _count_breakpoints(payload: dict) -> int:

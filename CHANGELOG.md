@@ -44,3 +44,11 @@
 - **工具调用 ID 双向持久映射**（问题清单组4#3，原 LIMITATIONS #2）：`src/state/idmap.py` 会话级 canonical ↔ 各协议外部形式，SQLite 持久、铸造稳定（前缀不抖动）、会话间隔离（并发分叉不串号）；网关 to_ir 后归一、from_ir 前翻译、落库前翻回 canonical（`TestToolIdMap` 5 项）
 - **状态层重放保留结构化块**（原 LIMITATIONS #3）：`assistant_from_upstream()` 保留 thinking（signature / redacted）与 tool_use（含解析后 tool_input）入历史，多轮思考链/工具链不再断（`TestAssistantFromUpstream` 4 项）
 - 测试 25 → **40 项全过** + 11 项端到端冒烟全过（Python 3.13）
+
+## 2026-09-09 · property-based 测试 + 有损清单 + CI（本提交）
+
+- **`TestPropertyRoundTrip`**（问题清单组5#10）：stdlib 实现、固定种子可复现，440 个随机用例断言四条性质——断点恒在 [3,4] / 未知顶层字段必降级 / 工具参数跨协议守恒 / thinking signature 往返守恒（参数丢失 bug 正是这类性质被抓出的）。测试 40 → **44 项全过**
+- **新增 `docs/lossy-fields.md`**（问题清单主线交付物）：从三个 adapter 实码推导的有损字段清单（块级 / 参数级 / usage 归一级），含两处诚实标注的清单盲区（工具定义内部字段无 dropped 记录、多模态/流式未覆盖）
+- **GitHub Actions CI**：`.github/workflows/test.yml`，Python 3.11/3.12/3.13 矩阵跑单测 + 冒烟 + dry-run（零依赖，无需装包）；README 加 badge 行
+- README 修正一处悬空引用（原指向方案 v3.1 已不存在的节号，改指实验文档方法学节）
+- 文档口径：实验文档成本列改为**相对倍数**（7.35× / 10.2× / 7.9×），不再出现绝对金额；ir-schema 移除签字栏（冻结约束以「双方确认 + 变更记录」为准）
