@@ -133,7 +133,7 @@ do_POST（路由 /v1/{source}/to/{target}，未知协议 → 400）
 | 多轮 previous_response_id 链路（0→2→4 条重放） | ✅ 修复后通过 | 2026-09-02 |
 | Groq 真实链路（Chat 直通 + Responses→Chat + usage 归一 + 埋点） | ✅ | 2026-09-01 |
 | 实验框架 dry-run | ✅ | 2026-09-02 |
-| Anthropic 端点缓存透传 | ⏸ 通道 503 待恢复 | — |
+| Anthropic 端点缓存透传 + 命中率埋点对账（E29） | ✅ 两轮 cc=5978→cr=5978，埋点与 usage 逐字段一致 | 2026-09-09 |
 
 ## 五、2026-09-02 两轮代码自查（9 个真实 bug，全部修复）
 
