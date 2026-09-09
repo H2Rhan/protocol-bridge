@@ -59,7 +59,7 @@ bp_after_tools / bp_after_system / bp_after_history_static / bp_rolling_tail
 4. 滚动尾部，跟随每轮最后一块（`bp_rolling_tail`）
 
 > 不采用「历史每 N 块插断点」——长对话必然突破 4 个上限。
-> 20-block 回看窗口由滚动尾部断点覆盖（见方案图 2）。
+> 断点布局依据：断点按**前缀累积**生效（exp3/exp12 实测）+ 4 断点硬上限（exp7 实测第 5 个返回 400）。
 
 ### Session 边界（可切换，config/session.json 驱动）
 
@@ -86,6 +86,20 @@ bp_after_tools / bp_after_system / bp_after_history_static / bp_rolling_tail
 | OpenAI Responses | `input_tokens` + `input_tokens_details.cached_tokens` |
 
 统一拆成 `IRUsage{input, output, cache_creation, cache_read}`，`total_input = input + cache_creation + cache_read`。
+
+---
+
+## 变更记录
+
+「冻结」的准确含义：**L0/L1 语义层冻结**（块模型与规范请求的字段集合），实现层允许修订，
+但任何修订必须配回归测试、契约外字段必须进 `extra` 降级记录（`record_unknown()` 统一收口）。
+契约的稳定性不靠「不改」保证，靠「改了一定被发现」保证。
+
+| 版本 | 日期 | 变更 | 性质 |
+|---|---|---|---|
+| v0 | 2026-09-01 | 三层契约定稿（本文件） | 语义层冻结 |
+| v0.1 | 2026-09-05 | 实现层修订：落地第 4 个固定断点 `bp_after_history_static`；三 adapter 顶层字段统一 `record_unknown()` 收口；thinking/tool_choice 经 `extra` 透传。**L0/L1 语义未动** | 实现层（各配回归测试，见 REVIEW.md 第五节） |
+| v0.2 | 2026-09-09 | 删除对「20-block 回看窗口」的引用——该约束已被本组实验决定性证伪（exp5/7/11：60 块 10872 token 仍 100% 命中，见 experiment-results.md 第三节） | 文档修订（契约字段未动） |
 
 ## 签字
 

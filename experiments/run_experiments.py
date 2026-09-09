@@ -9,7 +9,7 @@
 三组实验：
   一 · 更新频率  A 不注入 / B 锁死注入 / C 每轮动态注入
   二 · 位置      D1 前缀头部 / D2 尾部 append（可降级）
-  三 · 粒度      G1 300 / G2 4x512 / G3 2048 / G4 30 块（20-block 断崖）
+  三 · 粒度      G1 300 / G2 4x512 / G3 2048 / G4 30 块（验证块数非约束——20-block 已证伪）
 
 真实运行（拿到 key 后）：python run_experiments.py --live --backend <url>
 """

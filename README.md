@@ -10,21 +10,23 @@ OpenAI Chat / OpenAI Response ↔ Anthropic 的协议转换层（网关/代理 +
 
 ## 当前状态
 
-| 模块 | 状态 | 说明 |
+| 模块 | 状态 | 证据 |
 |---|---|---|
-| IR v0 契约 | ✅ 离线 | `docs/ir-schema.md` + `src/ir/model.py` |
-| 状态层（SQLite 持久化）+ 可切换 Session 配置 | ✅ v1.1 | `src/state/` + `config/session.json`，重启不丢 |
-| 三对 adapter（字段映射） | ✅ 离线 | `src/adapters/`，录制样例可测 |
-| 网关转发 + SSE 透传 | ✅ 离线（mock）/ Groq 真实链路已验证 | `src/gateway/` |
-| 记忆注入（幂等去重 + memory_cap） | ✅ v1.1 新增 | `inject_memories`，管理口 `/v1/admin/session/meta` |
-| 预热拒绝条件校验 | ✅ v1.1 新增 | stream/thinking/structured outputs/tool_choice 四类冲突 400 |
+| IR v0 契约（三层 + 变更记录） | ✅ 冻结（语义层） | `docs/ir-schema.md` + `src/ir/model.py`；抗漂移机制见变更记录节 |
+| 状态层（SQLite 持久化）+ 可切换 Session 配置 | ✅ v1.1 | `src/state/` + `config/session.json`，重启不丢（`TestStateLayer`） |
+| 三对 adapter（字段映射） | ✅ 离线 | `src/adapters/`，录制样例可测（`TestAdapterRoundTrip`） |
+| 网关转发 | ✅ 离线（mock）/ Groq 真实链路已验证 | `src/gateway/`；E29 真实端点对账 |
+| SSE 流式 | ◐ 整读透传 | 逐块转换未实现 → `docs/LIMITATIONS.md` #1；E21 证明流式无损命中率 |
+| 记忆注入（幂等去重 + memory_cap） | ✅ v1.1 新增 | `inject_memories` + `TestGatewayPolicies`；管理口 `/v1/admin/session/meta` |
+| 预热拒绝条件校验 | ✅ v1.1 新增 | stream/thinking/structured outputs/tool_choice 四类冲突 400（`TestWarmup`） |
 | 限流 | ✅ v1.1 新增 | `PB_CONCURRENCY`（默认 2） |
-| 命中率埋点（5 项暴露） | ✅ 已实做对账 | v1.1 起真实统计、v1.2 预热轮单列/加锁；E29 实测埋点与 API usage 逐字段一致 |
-| max_tokens:0 预热路径 | ✅ 字段处理 | 用录制响应样例测 |
-| **两轮代码自查（9 bug 修复 + 回归测试）** | ✅ **v1.2 新增** | 含 3 个严重项（状态层空转 / 多轮链断 / prev_id 回传），见 `docs/REVIEW.md` 第五节 |
-| 三组对照实验 | ✅ 34 组全量实测 | `experiments/`（`rich_experiments.py` E20–E28 + `rich_experiments2.py` E30–E34）；结果见 `docs/experiment-results.md` |
+| 命中率埋点（5 项暴露） | ✅ 已对账 | **E29：埋点与真实端点 usage 逐字段一致** |
+| max_tokens:0 预热路径 | ✅ 实测有效 | 录制样例测 + 实测预热后 100% 命中（exp17） |
+| **两轮代码自查（9 bug 修复 + 回归测试）** | ✅ **v1.2 新增** | 含 3 个严重项，各配回归测试（`TestAuditFindings`），见 `docs/REVIEW.md` 第五节 |
+| 三组对照实验 | ✅ 34 组全量实测 | `docs/experiment-results.md`（含第〇节证伪条件预登记） |
 | TRACK04 签字确认稿 | ✅ v1.1 新增 | `docs/TRACK04_签字确认稿.md`，分工会直接签 |
 | 弹网页（本地仪表盘） | ✅ 记忆编排界面 | `src/webui/` 安全骨架 + 记忆勾选/裁剪 + 缓存前缀可视化 |
+| 已知限制（边界自觉） | 📋 12 项四要素 | `docs/LIMITATIONS.md`（含结论隔离证明） |
 
 ## 快速开始（离线）
 
@@ -69,8 +71,15 @@ python -m src.gateway.server
 ## 实验（已完成，34 组）
 
 - 缓存命中率实测 **34 组**（exp1–19 三组对照 + E20–E28 覆盖 + E30–E34 进阶），量化取舍结论见 `docs/experiment-results.md`。
+- **实验编号 = 假设编号**：问题清单的 A 级条目在写代码前即登记为待判决假设（测试左移），回链表见实验文档第〇节。判决分布：证实 8 · 证伪/反向 4 · 反转 1（含「20-block 回看窗口」证伪、「05B 透传不可行 → 转 Messages 可达」反转）。
 - 核心结论：LOCKED vs DYNAMIC ≈ **7.3×**（跨模型一致）；命中比冷启动快 **~1.65s**；缓存按 provider 隔离、不跨模型复用；haiku-4.5 阈值 4096 token。
 - 配套脚本：`experiments/run_experiments.py`（三组对照）、`rich_experiments.py`（E20–E28）、`rich_experiments2.py`（E30–E34）。
+
+## 与上游 TencentDB-Agent-Memory 的关系
+
+[TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) 的核心机制是「proxy 不改协议、每轮向上下文注入 L2/L3 记忆」——**本仓库的 34 组实验量化的正是这套机制的成本语义**：同一份记忆，锁死注入 vs 动态注入成本差 7.3×；低于模型阈值静默不缓存；断点布局直接决定前缀稳定性。
+
+可拆出提上游的方向：AgentMemory proxy 目前**没有 `cache_control` 断点布局与缓存命中率埋点**——本仓库的断点布局（3 固定 + 1 滚动）与 5 项埋点（E29 已与真实端点对账）可作为参考实现。
 
 ## 目录
 
@@ -79,7 +88,7 @@ src/
   ir/            IR 数据模型（L0/L1/L2）
   adapters/      chat / response / anthropic 三对 adapter
   state/         会话表 + TTL + session 配置 + build_prefix
-  gateway/       HTTP 转发 + SSE 透传
+  gateway/       HTTP 转发（SSE 为整读透传，逐块转换见 docs/LIMITATIONS.md #1）
   observability/ 命中率埋点（5 项暴露）
   warmup/        max_tokens:0 预热
   webui/         弹网页本地仪表盘（安全骨架 + 记忆编排界面）
@@ -87,5 +96,6 @@ config/          session.json（Session 边界可切换配置）
 experiments/     三组对照 + rich_experiments.py（E20–E28）+ rich_experiments2.py（E30–E34）
 tests/           离线单测（录制样例 + 自查回归 + 多轮链 E2E）
 tools/           mock_backend + verify_cache + smoke_e2e + recordings
-docs/            ir-schema.md / capability-matrix.md / REVIEW.md / TRACK04_签字确认稿.md
+docs/            ir-schema.md / capability-matrix.md / experiment-results.md / LIMITATIONS.md / REVIEW.md / TRACK04_签字确认稿.md
+CHANGELOG.md     按日期演进记录（v0 契约冻结 → v1.2 → 实验交付 → 覆盖补全）
 ```
