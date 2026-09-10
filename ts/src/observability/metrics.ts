@@ -30,6 +30,16 @@ export interface TurnMetrics {
   dropped_params: Json[];
   // ⑤ 走了哪条降级路径（explicit / silent）
   degradation_path: string;
+  // ---- 第四轮自查：②③的口径修正（增量字段，不动既有字段防断数据溯源链）----
+  /** ②③的字符口径原值——injected_tokens/replayed_tokens 历史字段实际存的
+   *  是字符数（LIMITATIONS #7），字段名保留不动以免历史 jsonl 无法对账；
+   *  新数据以 *_chars 为准读口径、以 *_tokens_est 为准读估算。 */
+  injected_chars: number;
+  replayed_chars: number;
+  /** 按可校准系数折算的 token 估算（系数见 MetricsLog.charsPerToken，
+   *  可用官方 /v1/messages/count_tokens 实测校准，默认 5.1 字符/token）。 */
+  injected_tokens_est: number;
+  replayed_tokens_est: number;
 }
 
 export function makeTurnMetrics(init: Partial<TurnMetrics> = {}): TurnMetrics {
@@ -43,6 +53,10 @@ export function makeTurnMetrics(init: Partial<TurnMetrics> = {}): TurnMetrics {
     replayed_tokens: init.replayed_tokens ?? 0,
     dropped_params: init.dropped_params ?? [],
     degradation_path: init.degradation_path ?? "none",
+    injected_chars: init.injected_chars ?? 0,
+    replayed_chars: init.replayed_chars ?? 0,
+    injected_tokens_est: init.injected_tokens_est ?? 0,
+    replayed_tokens_est: init.replayed_tokens_est ?? 0,
   };
 }
 
@@ -61,9 +75,14 @@ export function cacheUsed(m: TurnMetrics): boolean {
  */
 export class MetricsLog {
   path: string;
+  /** 字符→token 折算系数（默认 5.1，可用 PB_CHARS_PER_TOKEN 覆盖；
+   *  该系数应用官方 count_tokens 接口实测校准，见 LIMITATIONS #7）。 */
+  charsPerToken: number;
 
-  constructor(path: string) {
+  constructor(path: string, charsPerToken?: number) {
     this.path = path;
+    this.charsPerToken = charsPerToken ??
+      Number(process.env.PB_CHARS_PER_TOKEN ?? "5.1");
   }
 
   record(m: TurnMetrics): void {
@@ -72,6 +91,7 @@ export class MetricsLog {
 
   recordTurn(usage: IRUsage, injected: number, replayed: number,
              dropped: Json[], degradation: string, kind: string = NORMAL): TurnMetrics {
+    const cpt = this.charsPerToken > 0 ? this.charsPerToken : 5.1;
     const m = makeTurnMetrics({
       kind,
       cache_creation_input_tokens: usage.cache_creation_input_tokens,
@@ -81,6 +101,10 @@ export class MetricsLog {
       replayed_tokens: replayed,
       dropped_params: [...dropped],
       degradation_path: degradation,
+      injected_chars: injected,
+      replayed_chars: replayed,
+      injected_tokens_est: Math.round(injected / cpt),
+      replayed_tokens_est: Math.round(replayed / cpt),
     });
     this.record(m);
     return m;

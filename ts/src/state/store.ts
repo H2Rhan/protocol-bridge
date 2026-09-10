@@ -219,10 +219,21 @@ export class SessionStore {
   }
 
   append(session: Session, messages: ir.Message[]): void {
-    session.history.push(...messages);
-    session.cursor = session.history.length;
-    session.touched_at = Date.now() / 1000;
-    this._save(session);
+    // 并发同键会话的丢更新修复（第四轮自查）：调用方持有的可能是旧快照——
+    // convert() 读会话到 finalizeTurn() 落库之间隔着一次上游 RTT，另一个
+    // 同键请求可能已 append 过；INSERT OR REPLACE 整行覆盖会把对方的轮次抹掉。
+    // 先读最新行再合并（与 recordResponse 同一模式），并发下历史只多不少。
+    const fresh = this._load(session.key) ?? session;
+    fresh.history.push(...messages);
+    fresh.cursor = fresh.history.length;
+    fresh.touched_at = Date.now() / 1000;
+    this._save(fresh);
+    // 同步调用方对象，防止其后续再 _save 旧值造成二次覆盖
+    session.history = fresh.history;
+    session.cursor = fresh.cursor;
+    session.touched_at = fresh.touched_at;
+    session.meta = fresh.meta;
+    session.responses = fresh.responses;
   }
 
   // -- TTL 淘汰 -----------------------------------------------------------
@@ -249,7 +260,11 @@ export class SessionStore {
     for (const { key } of rows) {
       if (this.cfg.on_end === "drop") {
         this.db.prepare("DELETE FROM sessions WHERE key=?").run(key);
-      } else { // archive：标记关闭但保留可查
+        // 级联清理（第四轮自查）：resp_index / tool_id_map 以 session_key 为
+        // 外键语义，只删主表会留下孤儿行，长运行网关上两张辅表无界增长。
+        this.db.prepare("DELETE FROM resp_index WHERE session_key=?").run(key);
+        this.db.prepare("DELETE FROM tool_id_map WHERE session_key=?").run(key);
+      } else { // archive：标记关闭但保留可查（辅表随主表一并保留，语义一致）
         this.db.prepare("UPDATE sessions SET closed=1 WHERE key=?").run(key);
       }
     }

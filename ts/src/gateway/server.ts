@@ -16,6 +16,7 @@
 import http from "node:http";
 import { once } from "node:events";
 import { TextDecoder } from "node:util";
+import { randomUUID } from "node:crypto";
 import * as ir from "../ir/model.ts";
 import { Dropped, assistantFromUpstream } from "../adapters/base.ts";
 import { ChatAdapter, usageFromChat } from "../adapters/chat.ts";
@@ -193,7 +194,14 @@ export function convert(source: string, target: string, payload: ir.Json,
   //                      response_id 给客户端，否则第一轮之后无从续接
   //   previous_response_id 已解析出会话
   if (session === null && (target === "anthropic" || target === "openai_response")) {
-    session = gw.STORE.getOrCreate(gw.CFG.sessionKey(headers));
+    // 空键隔离（第四轮自查）：key_fields 拼出的状态键为空（客户端没带指定
+    // 请求头）时，若直接用 "" 作键，所有匿名请求会共用同一个会话——历史、
+    // 记忆注入、工具 ID 映射全部跨客户端串味。退化为一次性 ephemeral 键：
+    // 本轮功能完整（断点布局/记忆注入/response_id 登记均可用），会话随 TTL
+    // 自然淘汰，且不与任何其他请求共享状态。
+    const configuredKey = gw.CFG.sessionKey(headers);
+    const key = configuredKey !== "" ? configuredKey : `ephemeral|${randomUUID()}`;
+    session = gw.STORE.getOrCreate(key);
   }
 
   // v1.4 工具 ID 双向映射（问题清单组4#3，需会话作用域；无会话则直通）
