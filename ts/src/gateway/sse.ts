@@ -214,8 +214,7 @@ export class AnthropicToChatStream {
  *
  * Chat 流式响应默认不带 usage（除非客户端传 stream_options.include_usage），
  * 收不到就是 0——如实记录，不编造。
- */
-export class ChatStreamCollector {
+ */export class ChatStreamCollector {
   private textParts: string[] = [];
   private usageData: Json = {};
   // index -> {id,name,args[]}（Chat 流的工具参数也是分段 delta）
@@ -260,3 +259,150 @@ export class ChatStreamCollector {
     return { choices: [{ index: 0, message: msg }], usage: this.usageData };
   }
 }
+
+// Chat finish_reason → Anthropic stop_reason（STOP_MAP 的逆方向）
+const FINISH_MAP: Record<string, string> = {
+  stop: "end_turn", length: "max_tokens", tool_calls: "tool_use",
+  content_filter: "refusal",
+};
+
+/** Chat completion.chunk → Anthropic SSE 事件（v2.1：anthropic←chat 逐块转换）。
+ *
+ * 与 AnthropicToChatStream 互为逆方向。事件序列对齐官方：
+ *   message_start → content_block_start → content_block_delta* →
+ *   content_block_stop → message_delta（stop_reason + usage）→ message_stop
+ *
+ * 块索引布局：文本块（若有）占 index 0，工具块按首次出现顺序续排。
+ * 已知折损（与逆方向的工具参数缓冲同级）：OpenAI 通常按 slot 顺序流完一个
+ * 工具再流下一个；若上游交错发送（slot A→B→A），已关闭的块不能重开，
+ * 迟到的 arguments 片段不进帧（客户端可见流少一段），但 ChatStreamCollector
+ * 的流尾汇总仍完整——历史落库与埋点不受影响。
+ */
+export class ChatToAnthropicStream {
+  private msgId = "msg_stream";
+  private model = "";
+  private started = false;
+  private finished = false;
+  // 当前打开的块：index + 类型 +（工具块的）chat slot 号
+  private open: { index: number; kind: "text" | "tool"; slot: number } | null = null;
+  private nextIndex = 0;
+  // chat tool_calls[].index -> 已分配的 anthropic 块 index
+  private toolBlocks = new Map<number, { index: number; id: string; name: string }>();
+  private outputTokens = 0;
+
+  private static frame(event: string, obj: Json): string {
+    return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
+  }
+
+  private startIfNeeded(chunk: Json): string[] {
+    if (this.started) return [];
+    this.started = true;
+    this.msgId = chunk.id ?? this.msgId;
+    this.model = chunk.model ?? this.model;
+    return [ChatToAnthropicStream.frame("message_start", {
+      type: "message_start",
+      message: { id: this.msgId, type: "message", role: "assistant",
+                 content: [], model: this.model,
+                 stop_reason: null, stop_sequence: null,
+                 usage: { input_tokens: 0, output_tokens: 0 } },
+    })];
+  }
+
+  private closeOpen(): string[] {
+    if (!this.open) return [];
+    const idx = this.open.index;
+    this.open = null;
+    return [ChatToAnthropicStream.frame("content_block_stop",
+                                        { type: "content_block_stop", index: idx })];
+  }
+
+  /** 喂一行 Chat SSE data 内容（已去掉 'data:' 前缀），返回 Anthropic 帧。 */
+  feedData(dataStr: string): string[] {
+    const s = dataStr.trim();
+    if (!s) return [];
+    if (s === "[DONE]") return this.finish(null);
+    let d: Json;
+    try { d = JSON.parse(s); } catch { return []; }
+    if (d === null || typeof d !== "object") return [];
+
+    const out: string[] = this.startIfNeeded(d);
+    // 末尾 usage 块（include_usage 时）：choices 为空、只带 usage
+    const usage = d.usage;
+    if (usage !== null && typeof usage === "object") {
+      this.outputTokens = usage.completion_tokens ?? this.outputTokens;
+    }
+    for (const ch of d.choices ?? []) {
+      const delta = ch.delta ?? {};
+      const content = delta.content;
+      if (typeof content === "string" && content) {
+        if (this.open?.kind !== "text") {
+          out.push(...this.closeOpen());
+          const idx = this.nextIndex++;
+          this.open = { index: idx, kind: "text", slot: -1 };
+          out.push(ChatToAnthropicStream.frame("content_block_start", {
+            type: "content_block_start", index: idx,
+            content_block: { type: "text", text: "" } }));
+        }
+        out.push(ChatToAnthropicStream.frame("content_block_delta", {
+          type: "content_block_delta", index: this.open!.index,
+          delta: { type: "text_delta", text: content } }));
+      }
+      for (const tc of delta.tool_calls ?? []) {
+        const slot = tc.index ?? 0;
+        let blk = this.toolBlocks.get(slot);
+        if (!blk) {
+          blk = { index: -1, id: "", name: "" }; // index 打开时才分配
+          this.toolBlocks.set(slot, blk);
+        }
+        if (tc.id) blk.id = tc.id;
+        const fn = tc.function ?? {};
+        if (fn.name) blk.name = fn.name;
+        const isOpen = this.open?.kind === "tool" && this.open.slot === slot;
+        if (!isOpen && (fn.name || tc.id)) {
+          // 新工具块：关掉当前块再开（首次见到该 slot 的标识信息时）
+          out.push(...this.closeOpen());
+          blk.index = this.nextIndex++;
+          this.open = { index: blk.index, kind: "tool", slot };
+          out.push(ChatToAnthropicStream.frame("content_block_start", {
+            type: "content_block_start", index: blk.index,
+            content_block: { type: "tool_use", id: blk.id,
+                             name: blk.name, input: {} } }));
+        }
+        // 只有当前打开 slot 的参数片段才进帧（迟到片段见类注释的折损说明）
+        if (fn.arguments && this.open?.kind === "tool" && this.open.slot === slot) {
+          out.push(ChatToAnthropicStream.frame("content_block_delta", {
+            type: "content_block_delta", index: this.open.index,
+            delta: { type: "input_json_delta", partial_json: fn.arguments } }));
+        }
+      }
+      if (ch.finish_reason) {
+        out.push(...this.finish(String(ch.finish_reason)));
+        return out;
+      }
+    }
+    return out;
+  }
+
+  /** 收尾：关块 → message_delta（stop_reason + output usage）→ message_stop。 */
+  private finish(reason: string | null): string[] {
+    if (!this.started) {
+      // 上游一帧未发就 [DONE]：仍要给出合法事件序列
+      this.started = true;
+      const out = this.startIfNeeded({});
+      out.push(...this.finish(reason));
+      return out;
+    }
+    if (this.finished) return [];
+    this.finished = true;
+    const out = this.closeOpen();
+    out.push(ChatToAnthropicStream.frame("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: (reason && FINISH_MAP[reason]) || "end_turn",
+               stop_sequence: null },
+      usage: { output_tokens: this.outputTokens },
+    }));
+    out.push(ChatToAnthropicStream.frame("message_stop", { type: "message_stop" }));
+    return out;
+  }
+}
+

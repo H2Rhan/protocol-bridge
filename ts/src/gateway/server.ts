@@ -25,7 +25,8 @@ import { AnthropicAdapter, usageFromAnthropic } from "../adapters/anthropic.ts";
 import { load as loadSessionConfig } from "../state/session_config.ts";
 import { SessionStore, Session } from "../state/store.ts";
 import { MetricsLog, NORMAL, WARMUP } from "../observability/metrics.ts";
-import { AnthropicToChatStream, ChatStreamCollector, SseEventParser } from "./sse.ts";
+import { AnthropicToChatStream, ChatStreamCollector, ChatToAnthropicStream,
+         SseEventParser } from "./sse.ts";
 
 /** 模块级可变配置（对齐 Python 的模块全局，测试可整体替换）。 */
 export const gw = {
@@ -459,6 +460,9 @@ export async function handleRequest(req: http.IncomingMessage,
     if (source === "openai_chat" && target === "anthropic") {
       return streamFromAnthropic(res, out, irReq, dropped, session, replayed);
     }
+    if (source === "anthropic" && target === "openai_chat") {
+      return streamFromChatUpstream(res, out, irReq, dropped, session, replayed);
+    }
     if (source === target && (source === "openai_chat" || source === "anthropic")) {
       return streamPassthrough(res, out, irReq, dropped, session, replayed, target);
     }
@@ -466,6 +470,7 @@ export async function handleRequest(req: http.IncomingMessage,
       message: `暂不支持 ${source} -> ${target} 方向的流式；请改用 stream:false`,
       type: "invalid_request_error",
       supported_streaming: ["openai_chat->anthropic",
+                            "anthropic->openai_chat",
                             "openai_chat->openai_chat",
                             "anthropic->anthropic"] } });
   }
@@ -576,6 +581,73 @@ async function streamFromAnthropic(res: http.ServerResponse, out: ir.Json,
   // dropped 清单对流式客户端不可见（SSE 帧里没有它的位置）——
   // 已写进 LIMITATIONS #1 的范围说明，埋点里 degradation 仍如实记录。
   finalizeTurn("anthropic", conv.syntheticResponse(), irReq, dropped,
+               session, replayed, false);
+}
+
+/** SSE 逐块流式（v2.1 新增方向）：Chat 上游 chunk → Anthropic 事件即时下发。
+ *
+ * 与 streamFromAnthropic 互为逆方向，结构对称：
+ * 转换器（ChatToAnthropicStream）产客户端帧，收集器（ChatStreamCollector）
+ * 旁路攒流尾汇总——转换、限流、usage 归一、埋点、历史落库全部复用同一条
+ * 路径（finalizeTurn + syntheticResponse），不另造语义。
+ */
+async function streamFromChatUpstream(res: http.ServerResponse, out: ir.Json,
+                                      irReq: ir.IRRequest, dropped: Dropped,
+                                      session: Session | null,
+                                      replayed: ir.Message[]): Promise<void> {
+  const path = gw.BACKEND_PATH.openai_chat;
+  // 让上游在流尾带 usage 块（OpenAI 系默认不带）：客户端收到的是转换后的
+  // Anthropic 事件、看不到原始 chunk，注入该参数对客户端不可见、零副作用，
+  // 但流尾的 usage 归一与命中率埋点就有了真实数据（不编造）。
+  out.stream_options = { ...(out.stream_options ?? {}), include_usage: true };
+  await GATE.acquire(); // 限流：流式请求同样占并发名额
+  let upstream: http.IncomingMessage;
+  try {
+    upstream = await openStream(gw.BACKEND_URL + path, out, "openai_chat");
+  } catch (e) {
+    GATE.release();
+    if (e instanceof UpstreamHttpError) {
+      return jsonResponse(res, e.statusCode, {
+        error: { message: "backend error", type: "upstream_error",
+                 status: e.statusCode, detail: e.body } });
+    }
+    return jsonResponse(res, 502, {
+      error: { message: `backend unreachable: ${(e as Error).message}`,
+               type: "upstream_error" } });
+  }
+
+  sseHead(res);
+  const conv = new ChatToAnthropicStream();
+  const collector = new ChatStreamCollector(); // 旁路汇总，供 finalizeTurn 复用
+  const parser = new SseEventParser();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  const feed = (text: string): string[] => {
+    const frames: string[] = [];
+    for (const [, data] of parser.feed(text)) {
+      const s = typeof data === "string" ? data : JSON.stringify(data);
+      frames.push(...conv.feedData(s));
+      collector.feedData(s);
+    }
+    return frames;
+  };
+  try {
+    for await (const chunk of upstream) {
+      const text = decoder.decode(chunk as Buffer, { stream: true });
+      for (const frame of feed(text)) {
+        if (!res.write(frame)) await once(res, "drain");
+      }
+    }
+    for (const frame of feed(decoder.decode())) res.write(frame);
+  } catch {
+    // 客户端中途断开：流尾落库/埋点照常（这轮 API 费用已实际发生）
+  } finally {
+    upstream.destroy();
+    res.end();
+    GATE.release();
+  }
+
+  // 流尾：与非流式同一套 usage 归一 + 埋点 + 历史落库（target 是上游协议 chat）
+  finalizeTurn("openai_chat", collector.syntheticResponse(), irReq, dropped,
                session, replayed, false);
 }
 
