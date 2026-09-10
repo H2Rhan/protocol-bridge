@@ -6,14 +6,14 @@
 
 ## 一、协议转换链路
 
-### #1 SSE 逐块流式转换（v1.6 部分闭环：chat 客户端 ← anthropic 上游）
+### #1 SSE 逐块流式转换（TS v2.2 协议方向全闭环）
 
-> ◐ **v1.6 部分闭环**（2026-09-09）：`openai_chat` 客户端 ← `anthropic` 上游方向已实现**逐块流式**——`src/gateway/sse.py` 把 Anthropic 事件逐块翻成 Chat chunk 即时下发（冒烟实测首尾帧间隔 30.7ms，证明非整读补吐）；text_delta 即时下发、工具参数按既定折损缓冲到 `content_block_stop`、usage 流尾合并后照常进 5 项埋点、历史落库复用 `assistant_from_upstream`（流式与非流式同一路径）。回归测试 `TestSseConversion` 7 项 + 冒烟第 6 组 7 项。**v1.7 补充**（2026-09-09）：同协议直通流式（chat←chat / anthropic←anthropic）已闭环——字节原样透传 + 旁路收集流尾汇总（`tee_lines` / `ChatStreamCollector`）；**未实现的流式方向（response 源三维寻址、anthropic←chat 等）改为显式 501**（此前是 `post_json` 把 SSE 当 JSON 解析炸成语焉不详的 502）。**TS v2.1 补充**（2026-09-10，仅 ts/）：`anthropic` 客户端 ← `openai_chat` 上游方向已闭环——`ChatToAnthropicStream` 逐块转换（对齐官方事件序列），上游请求注入 `stream_options.include_usage` 使流尾 usage 归一有真实数据；chat↔anthropic 双向流式至此完整。**仍未闭环**：response 源相关方向的流式转换；流式轮的 dropped 清单对客户端不可见（埋点中 degradation 仍如实记录）。以下原文留档，未闭环范围以四要素为准。
+> ◐ **v1.6 部分闭环**（2026-09-09）：`openai_chat` 客户端 ← `anthropic` 上游方向已实现**逐块流式**——`src/gateway/sse.py` 把 Anthropic 事件逐块翻成 Chat chunk 即时下发（冒烟实测首尾帧间隔 30.7ms，证明非整读补吐）；text_delta 即时下发、工具参数按既定折损缓冲到 `content_block_stop`、usage 流尾合并后照常进 5 项埋点、历史落库复用 `assistant_from_upstream`（流式与非流式同一路径）。回归测试 `TestSseConversion` 7 项 + 冒烟第 6 组 7 项。**v1.7 补充**（2026-09-09）：同协议直通流式（chat←chat / anthropic←anthropic）已闭环——字节原样透传 + 旁路收集流尾汇总（`tee_lines` / `ChatStreamCollector`）；**未实现的流式方向（response 源三维寻址、anthropic←chat 等）改为显式 501**（此前是 `post_json` 把 SSE 当 JSON 解析炸成语焉不详的 502）。**TS v2.1 补充**（2026-09-10，仅 ts/）：`anthropic` 客户端 ← `openai_chat` 上游方向已闭环——`ChatToAnthropicStream` 逐块转换（对齐官方事件序列），上游请求注入 `stream_options.include_usage` 使流尾 usage 归一有真实数据；chat↔anthropic 双向流式至此完整。**TS v2.2 补充**（2026-09-10，仅 ts/）：Responses 流式五件套落地——`ResponseStreamCollector` / `ResponseToAnthropicStream` / `ResponseToChatStream` / `AnthropicToResponseStream` / `ChatToResponseStream`；response 源三维寻址（`output_index` / `content_index` / `item_id`）归一到扁平块号，`response.completed` 直接作为流尾汇总与 usage 来源，9 个协议方向流式全闭环。**仍未闭环**：流式轮的 dropped 清单对客户端不可见（埋点中 degradation 仍如实记录）。以下原文留档，历史触发条件与后续路线以本状态行为准。
 
 - **影响半径**：流式体验与首 token 延迟（TTFB）。功能正确性不受影响——响应内容完整、usage 归一与埋点照常工作。
-- **触发条件**：客户端请求 `stream:true` 经过网关。当前网关 `post_json` 整读响应后一次性返回；跨协议的事件模型转换（Chat `delta` / Responses 三维寻址 / Anthropic 块生命周期）未实现。
+- **触发条件**：客户端请求 `stream:true` 经过网关。TS v2.2 起 9 个协议方向均已逐块转换或同协议透传；早期网关 `post_json` 整读响应后一次性返回、跨协议事件模型转换未实现的描述仅作历史留档。
 - **绕过方式**：① 非流式调用网关（缓存命中率不受影响——E21 已实测流式与非流式命中率一致、缓存跨传输模式共享）；② 需要流式时直连端点。
-- **后续路线**：按 IR 块生命周期定义统一事件模型，先做 Anthropic→Chat 单方向逐块转换；`input_json_delta` 非完整 JSON 片段需缓冲到完整再发（长工具参数退化为非流式，属无法回避的折损，将写进限制）。
+- **后续路线**：剩余工作是流式轮 dropped 清单对客户端可见性；Python 版本如需对齐 TS v2.2 再另行移植。`input_json_delta` 非完整 JSON 片段仍按既定折损缓冲到完整再发。
 
 ### #2 工具调用 ID 无双向持久映射表（透传）
 

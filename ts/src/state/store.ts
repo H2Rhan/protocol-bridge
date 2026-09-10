@@ -190,6 +190,25 @@ export class SessionStore {
     return rid;
   }
 
+  /** 登记一个外部铸造的 response_id（v2.2：流式 responses 转换器已在事件流里
+   * 下发该 id，必须登记进 resp_index，否则客户端下轮 previous_response_id 404）。
+   * 与 recordResponse 的差别仅在 id 来源；responses 计数与 touched_at 同步维护。 */
+  registerResponseId(session: Session, rid: string): void {
+    const fresh = this._load(session.key) ?? session;
+    if (!(rid in fresh.responses)) {
+      fresh.responses[rid] = Object.keys(fresh.responses).length;
+    }
+    fresh.touched_at = Date.now() / 1000;
+    this._save(fresh);
+    session.meta = fresh.meta;
+    session.responses = fresh.responses;
+    session.history = fresh.history;
+    session.cursor = fresh.cursor;
+    this.db.prepare(
+      "INSERT OR REPLACE INTO resp_index (rid, session_key) VALUES (?,?)")
+      .run(rid, session.key);
+  }
+
   /** 合并写入会话 meta（如 memories / memory_cap），保留既有键。 */
   updateMeta(key: string, kw: ir.Json): void {
     let s = this._load(key);

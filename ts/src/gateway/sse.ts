@@ -1,15 +1,21 @@
-/** SSE 流式三件套（TS 移植自 src/gateway/sse.py，对应 v1.6/v1.7）：
+/** SSE 流式组件（TS 移植自 src/gateway/sse.py，v1.6/v1.7；v2.1/v2.2 为 TS 新增）：
  *
  * - parseSseLines：把 SSE 行流解析成 (event, data) 事件（单测用，同步可迭代输入）
  * - SseEventParser：增量分帧器（网关用，按 chunk 喂入，吐出完整事件）
  * - AnthropicToChatStream：Anthropic 事件 → Chat chunk 逐块转换
  * - ChatStreamCollector：chat←chat 直通流式的旁路收集器
+ * - ChatToAnthropicStream（v2.1）：Chat chunk → Anthropic 事件逐块转换
+ * - v2.2 Responses 五件套：ResponseStreamCollector / ResponseToAnthropicStream /
+ *   ResponseToChatStream / AnthropicToResponseStream / ChatToResponseStream
  *
- * 范围（LIMITATIONS #1）：chat 客户端 ← anthropic 上游逐块转换 +
- * chat←chat / anthropic←anthropic 同协议透传；其余方向显式 501。
+ * 范围（LIMITATIONS #1）：v2.2 起 9 个协议方向流式全闭环。
+ * Responses 是三维寻址事件模型（output_index / content_index / item_id），
+ * 归一策略：item/part 地址 → 顺序块号，与 chat/anthropic 的扁平块模型对齐；
+ * response.completed 自带完整响应与 usage，直通与旁路汇总直接取它，不逐帧拼。
  */
 
 import type { Json } from "../ir/model.ts";
+import { randomUUID } from "node:crypto";
 
 // Anthropic stop_reason → Chat finish_reason
 const STOP_MAP: Record<string, string> = {
@@ -405,4 +411,584 @@ export class ChatToAnthropicStream {
     return out;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Responses 流式（v2.2）：三维寻址事件模型的归一 + 双向转换 + 直通收集
+// ---------------------------------------------------------------------------
+
+function mintResponseId(): string {
+  return "resp_" + randomUUID().replaceAll("-", "").slice(0, 16);
+}
+
+/** response→response 直通 / responses 上游方向的流尾收集器。
+ *
+ * response.completed 携带完整响应（含 usage）——直接留作 syntheticResponse，
+ * usage 归一与历史落库复用 usageFromResponse / assistantFromUpstream。
+ * 上游没发 completed（流被截断）时用累计文本兜底拼最小响应，不空转。 */
+export class ResponseStreamCollector {
+  private completed: Json | null = null;
+  private textParts: string[] = [];
+
+  feedEvent(event: string | null, data: unknown): void {
+    if (data === null || typeof data !== "object") return;
+    const d = data as Json;
+    const t: string = d.type ?? event ?? "";
+    if (t === "response.completed") {
+      this.completed = (d.response as Json) ?? null;
+    } else if (t === "response.output_text.delta") {
+      this.textParts.push(String(d.delta ?? ""));
+    }
+  }
+
+  syntheticResponse(): Json {
+    if (this.completed) return this.completed;
+    const text = this.textParts.join("");
+    return { id: "resp_stream_partial", object: "response", status: "incomplete",
+             incomplete_details: { reason: "stream_truncated" },
+             output: text ? [{ type: "message", role: "assistant",
+                               status: "completed",
+                               content: [{ type: "output_text", text,
+                                           annotations: [] }] }] : [],
+             usage: {} };
+  }
+}
+
+/** Responses 事件 → Anthropic SSE 帧（v2.2，anthropic 客户端 ← responses 上游）。
+ *
+ * 地址归一：message 的 part 以 "oi:ci" 为键、function_call 以 "oi:" 为键，
+ * 按打开顺序分配 Anthropic 扁平块 index。 */
+export class ResponseToAnthropicStream {
+  private msgId = "msg_stream";
+  private model = "";
+  private started = false;
+  private finished = false;
+  private openBlocks = new Map<string, number>();
+  private nextIndex = 0;
+  private inputTokens = 0;
+
+  private static frame(event: string, obj: Json): string {
+    return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
+  }
+
+  private closeAll(): string[] {
+    const out: string[] = [];
+    for (const idx of [...this.openBlocks.values()].sort((a, b) => a - b)) {
+      out.push(ResponseToAnthropicStream.frame("content_block_stop",
+                                               { type: "content_block_stop", index: idx }));
+    }
+    this.openBlocks.clear();
+    return out;
+  }
+
+  feedEvent(event: string | null, data: unknown): string[] {
+    if (data === null || typeof data !== "object") return [];
+    const d = data as Json;
+    const t: string = d.type ?? event ?? "";
+    const out: string[] = [];
+    if (t === "response.created") {
+      const r = (d.response as Json) ?? {};
+      this.started = true;
+      this.msgId = r.id ?? this.msgId;
+      this.model = r.model ?? this.model;
+      this.inputTokens = r.usage?.input_tokens ?? 0;
+      out.push(ResponseToAnthropicStream.frame("message_start", {
+        type: "message_start",
+        message: { id: this.msgId, type: "message", role: "assistant",
+                   content: [], model: this.model,
+                   stop_reason: null, stop_sequence: null,
+                   usage: { input_tokens: this.inputTokens, output_tokens: 0 } } }));
+      return out;
+    }
+    if (!this.started || this.finished) return [];
+    const oi = d.output_index ?? 0;
+    if (t === "response.output_item.added") {
+      const item = (d.item as Json) ?? {};
+      if (item.type === "function_call") {
+        const idx = this.nextIndex++;
+        this.openBlocks.set(`${oi}:`, idx);
+        out.push(ResponseToAnthropicStream.frame("content_block_start", {
+          type: "content_block_start", index: idx,
+          content_block: { type: "tool_use",
+                           id: item.call_id ?? item.id ?? "",
+                           name: item.name ?? "", input: {} } }));
+      }
+      return out; // message 块等 content_part.added 确认 part 类型再开
+    }
+    if (t === "response.content_part.added") {
+      const part = (d.part as Json) ?? {};
+      if (part.type === "output_text" || part.type === "text") {
+        const ci = d.content_index ?? 0;
+        const idx = this.nextIndex++;
+        this.openBlocks.set(`${oi}:${ci}`, idx);
+        out.push(ResponseToAnthropicStream.frame("content_block_start", {
+          type: "content_block_start", index: idx,
+          content_block: { type: "text", text: "" } }));
+      }
+      return out;
+    }
+    if (t === "response.output_text.delta") {
+      const idx = this.openBlocks.get(`${oi}:${d.content_index ?? 0}`);
+      if (idx !== undefined) {
+        out.push(ResponseToAnthropicStream.frame("content_block_delta", {
+          type: "content_block_delta", index: idx,
+          delta: { type: "text_delta", text: d.delta ?? "" } }));
+      }
+      return out;
+    }
+    if (t === "response.function_call_arguments.delta") {
+      const idx = this.openBlocks.get(`${oi}:`);
+      if (idx !== undefined) {
+        out.push(ResponseToAnthropicStream.frame("content_block_delta", {
+          type: "content_block_delta", index: idx,
+          delta: { type: "input_json_delta", partial_json: d.delta ?? "" } }));
+      }
+      return out;
+    }
+    if (t === "response.content_part.done") {
+      const key = `${oi}:${d.content_index ?? 0}`;
+      const idx = this.openBlocks.get(key);
+      if (idx !== undefined) {
+        this.openBlocks.delete(key);
+        out.push(ResponseToAnthropicStream.frame("content_block_stop",
+                                                 { type: "content_block_stop", index: idx }));
+      }
+      return out;
+    }
+    if (t === "response.output_item.done") {
+      // function_call 正常在此关闭；message 的 part 若漏发 done 也在此兜底
+      for (const key of [`${oi}:`, `${oi}:${d.content_index ?? 0}`]) {
+        const idx = this.openBlocks.get(key);
+        if (idx !== undefined) {
+          this.openBlocks.delete(key);
+          out.push(ResponseToAnthropicStream.frame("content_block_stop",
+                                                   { type: "content_block_stop", index: idx }));
+        }
+      }
+      return out;
+    }
+    if (t === "response.completed" || t === "response.incomplete" ||
+        t === "response.failed") {
+      this.finished = true;
+      const r = (d.response as Json) ?? {};
+      const u = (r.usage as Json) ?? {};
+      out.push(...this.closeAll()); // 容错：上游漏发的 done 一并关
+      const stopReason = r.status === "incomplete" ? "max_tokens"
+                       : r.status === "failed" ? "refusal" : "end_turn";
+      out.push(ResponseToAnthropicStream.frame("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { output_tokens: u.output_tokens ?? 0 } }));
+      out.push(ResponseToAnthropicStream.frame("message_stop",
+                                               { type: "message_stop" }));
+      return out;
+    }
+    return out;
+  }
+}
+
+/** Responses 事件 → Chat completion.chunk 帧（v2.2，chat 客户端 ← responses 上游）。 */
+export class ResponseToChatStream {
+  private msgId = "chatcmpl_stream";
+  private created = Math.floor(Date.now() / 1000);
+  private model = "";
+  private started = false;
+  private finished = false;
+  private sawTool = false;
+  private toolIdx = new Map<number, number>(); // output_index -> chat tool index
+
+  private chunk(delta: Json, finish: string | null = null,
+                usage: Json | null = null): string {
+    const frame: Json = { id: this.msgId, object: "chat.completion.chunk",
+                          created: this.created, model: this.model,
+                          choices: [{ index: 0, delta, finish_reason: finish }] };
+    if (usage) frame.usage = usage;
+    return "data: " + JSON.stringify(frame) + "\n\n";
+  }
+
+  feedEvent(event: string | null, data: unknown): string[] {
+    if (data === null || typeof data !== "object") return [];
+    const d = data as Json;
+    const t: string = d.type ?? event ?? "";
+    if (t === "response.created") {
+      const r = (d.response as Json) ?? {};
+      this.started = true;
+      this.msgId = r.id ?? this.msgId;
+      this.model = r.model ?? this.model;
+      return [this.chunk({ role: "assistant" })];
+    }
+    if (!this.started || this.finished) return [];
+    if (t === "response.output_text.delta") {
+      return [this.chunk({ content: d.delta ?? "" })];
+    }
+    if (t === "response.output_item.added") {
+      const item = (d.item as Json) ?? {};
+      if (item.type === "function_call") {
+        const oi = d.output_index ?? 0;
+        const ti = this.toolIdx.size;
+        this.toolIdx.set(oi, ti);
+        this.sawTool = true;
+        return [this.chunk({ tool_calls: [{
+          index: ti, id: item.call_id ?? item.id ?? "", type: "function",
+          function: { name: item.name ?? "", arguments: "" } }] })];
+      }
+      return [];
+    }
+    if (t === "response.function_call_arguments.delta") {
+      const ti = this.toolIdx.get(d.output_index ?? 0) ?? 0;
+      return [this.chunk({ tool_calls: [{
+        index: ti, function: { arguments: d.delta ?? "" } }] })];
+    }
+    if (t === "response.completed" || t === "response.incomplete" ||
+        t === "response.failed") {
+      this.finished = true;
+      const r = (d.response as Json) ?? {};
+      const u = (r.usage as Json) ?? {};
+      const finish = this.sawTool ? "tool_calls"
+                   : r.status === "incomplete" ? "length" : "stop";
+      const usage = {
+        prompt_tokens: u.input_tokens ?? 0,
+        completion_tokens: u.output_tokens ?? 0,
+        prompt_tokens_details: {
+          cached_tokens: u.input_tokens_details?.cached_tokens ?? 0 } };
+      return [this.chunk({}, finish, usage), "data: [DONE]\n\n"];
+    }
+    return [];
+  }
+}
+
+/** Anthropic 事件 → Responses SSE 帧（v2.2，responses 客户端 ← anthropic 上游）。
+ *
+ * response id 由网关在构造时铸造（`responseId` 公开），原因：客户端下一轮会拿
+ * 这个 id 做 previous_response_id——它必须是网关**自己能解析**的 id（登记进
+ * resp_index），用上游 msg_xxx 的话多轮链路第一轮之后就断（与非流式路径
+ * body.id = rid 同理）。item_id 按块序铸造 item_<index>。
+ * response.completed 由累计内容组装完整响应（含 usage 归一到 Responses 口径）。 */
+export class AnthropicToResponseStream {
+  readonly responseId = mintResponseId();
+  private model = "";
+  private created = Math.floor(Date.now() / 1000);
+  private started = false;
+  private finished = false;
+  private items = new Map<number, {
+    itemId: string; kind: "text" | "tool";
+    text: string[]; args: string[]; callId: string; name: string }>();
+  private usageIn: Json = {};
+  private outputTokens = 0;
+  private stopReason = "end_turn";
+
+  private static frame(event: string, obj: Json): string {
+    return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
+  }
+
+  /** 一个 item 的完整 done 序列（text: 3 帧；tool: 2 帧）。 */
+  private flushItem(idx: number): string[] {
+    const it = this.items.get(idx);
+    if (!it) return [];
+    this.items.delete(idx);
+    const out: string[] = [];
+    if (it.kind === "text") {
+      const text = it.text.join("");
+      out.push(AnthropicToResponseStream.frame("response.output_text.done", {
+        type: "response.output_text.done",
+        item_id: it.itemId, output_index: idx, content_index: 0, text }));
+      out.push(AnthropicToResponseStream.frame("response.content_part.done", {
+        type: "response.content_part.done",
+        item_id: it.itemId, output_index: idx, content_index: 0,
+        part: { type: "output_text", text, annotations: [] } }));
+      out.push(AnthropicToResponseStream.frame("response.output_item.done", {
+        type: "response.output_item.done", output_index: idx,
+        item: { id: it.itemId, type: "message", role: "assistant",
+                status: "completed",
+                content: [{ type: "output_text", text, annotations: [] }] } }));
+    } else {
+      const args = it.args.join("");
+      out.push(AnthropicToResponseStream.frame(
+        "response.function_call_arguments.done", {
+          type: "response.function_call_arguments.done",
+          item_id: it.itemId, output_index: idx, arguments: args }));
+      out.push(AnthropicToResponseStream.frame("response.output_item.done", {
+        type: "response.output_item.done", output_index: idx,
+        item: { id: it.itemId, type: "function_call", call_id: it.callId,
+                name: it.name, arguments: args, status: "completed" } }));
+    }
+    return out;
+  }
+
+  feedEvent(event: string | null, data: unknown): string[] {
+    if (data === null || typeof data !== "object") return [];
+    const d = data as Json;
+    const etype: string = d.type ?? event ?? "";
+    const out: string[] = [];
+    if (etype === "message_start") {
+      const msg = (d.message as Json) ?? {};
+      this.started = true;
+      this.model = msg.model ?? this.model;
+      this.usageIn = (msg.usage as Json) ?? {};
+      out.push(AnthropicToResponseStream.frame("response.created", {
+        type: "response.created",
+        response: { id: this.responseId, object: "response",
+                    created_at: this.created, status: "in_progress",
+                    model: this.model, output: [] } }));
+      return out;
+    }
+    if (!this.started || this.finished) return [];
+    const idx = d.index ?? 0;
+    if (etype === "content_block_start") {
+      const block = (d.content_block as Json) ?? {};
+      const itemId = `item_${idx}`;
+      if (block.type === "tool_use") {
+        this.items.set(idx, { itemId, kind: "tool", text: [], args: [],
+                              callId: block.id ?? "", name: block.name ?? "" });
+        out.push(AnthropicToResponseStream.frame("response.output_item.added", {
+          type: "response.output_item.added", output_index: idx,
+          item: { id: itemId, type: "function_call",
+                  call_id: block.id ?? "", name: block.name ?? "",
+                  arguments: "", status: "in_progress" } }));
+      } else {
+        this.items.set(idx, { itemId, kind: "text", text: [], args: [],
+                              callId: "", name: "" });
+        out.push(AnthropicToResponseStream.frame("response.output_item.added", {
+          type: "response.output_item.added", output_index: idx,
+          item: { id: itemId, type: "message", role: "assistant",
+                  status: "in_progress", content: [] } }));
+        out.push(AnthropicToResponseStream.frame("response.content_part.added", {
+          type: "response.content_part.added",
+          item_id: itemId, output_index: idx, content_index: 0,
+          part: { type: "output_text", text: "", annotations: [] } }));
+      }
+      return out;
+    }
+    if (etype === "content_block_delta") {
+      const it = this.items.get(idx);
+      const delta = (d.delta as Json) ?? {};
+      if (!it) return [];
+      if (delta.type === "text_delta") {
+        it.text.push(delta.text ?? "");
+        out.push(AnthropicToResponseStream.frame("response.output_text.delta", {
+          type: "response.output_text.delta",
+          item_id: it.itemId, output_index: idx, content_index: 0,
+          delta: delta.text ?? "" }));
+      } else if (delta.type === "input_json_delta") {
+        it.args.push(delta.partial_json ?? "");
+        out.push(AnthropicToResponseStream.frame(
+          "response.function_call_arguments.delta", {
+            type: "response.function_call_arguments.delta",
+            item_id: it.itemId, output_index: idx,
+            delta: delta.partial_json ?? "" }));
+      }
+      // thinking_delta / signature_delta：Responses 侧不在方案范围，不落帧
+      return out;
+    }
+    if (etype === "content_block_stop") {
+      return this.flushItem(idx);
+    }
+    if (etype === "message_delta") {
+      const delta = (d.delta as Json) ?? {};
+      const usage = (d.usage as Json) ?? {};
+      this.outputTokens = usage.output_tokens ?? this.outputTokens;
+      this.stopReason = delta.stop_reason ?? this.stopReason;
+      return out;
+    }
+    if (etype === "message_stop") {
+      this.finished = true;
+      // 容错：还开着的 item 先按序 flush（流被截断时客户端仍收到完整序列）
+      for (const i of [...this.items.keys()].sort((a, b) => a - b)) {
+        out.push(...this.flushItem(i));
+      }
+      const incomplete = this.stopReason === "max_tokens";
+      const u = this.usageIn;
+      const usage = {
+        input_tokens: (u.input_tokens ?? 0) +
+                      (u.cache_creation_input_tokens ?? 0) +
+                      (u.cache_read_input_tokens ?? 0),
+        output_tokens: this.outputTokens,
+        input_tokens_details: { cached_tokens: u.cache_read_input_tokens ?? 0 },
+        output_tokens_details: { reasoning_tokens: 0 } };
+      const response: Json = {
+        id: this.responseId, object: "response", created_at: this.created,
+        status: incomplete ? "incomplete" : "completed",
+        model: this.model, output: [], usage };
+      if (incomplete) response.incomplete_details = { reason: "max_output_tokens" };
+      out.push(AnthropicToResponseStream.frame("response.completed",
+                                               { type: "response.completed", response }));
+      return out;
+    }
+    if (etype === "error") {
+      this.finished = true;
+      const err = (d.error as Json) ?? {};
+      out.push(AnthropicToResponseStream.frame("response.failed", {
+        type: "response.failed",
+        response: { id: this.responseId, object: "response",
+                    created_at: this.created, status: "failed",
+                    model: this.model, output: [],
+                    error: { message: err.message ?? "upstream error" } } }));
+      return out;
+    }
+    return out;
+  }
+}
+
+/** Chat chunk → Responses SSE 帧（v2.2，responses 客户端 ← chat 上游）。
+ *
+ * 与 AnthropicToResponseStream 同理：response id 网关铸造并公开（responseId），
+ * 供 finalizeTurn 登记进 resp_index 维持 previous_response_id 多轮链。
+ * message item 占 output_index 0，工具 item 依次占 1..n（chat tool slot + 1）。 */
+export class ChatToResponseStream {
+  readonly responseId = mintResponseId();
+  private model = "";
+  private created = Math.floor(Date.now() / 1000);
+  private started = false;
+  private finished = false;
+  private textOpen = false;
+  private textParts: string[] = [];
+  private toolSlots = new Map<number, {
+    itemId: string; callId: string; name: string; args: string[] }>();
+  private usageData: Json = {};
+
+  private static frame(event: string, obj: Json): string {
+    return `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
+  }
+
+  private openTextItem(): string[] {
+    this.textOpen = true;
+    return [
+      ChatToResponseStream.frame("response.output_item.added", {
+        type: "response.output_item.added", output_index: 0,
+        item: { id: "item_0", type: "message", role: "assistant",
+                status: "in_progress", content: [] } }),
+      ChatToResponseStream.frame("response.content_part.added", {
+        type: "response.content_part.added",
+        item_id: "item_0", output_index: 0, content_index: 0,
+        part: { type: "output_text", text: "", annotations: [] } }),
+    ];
+  }
+
+  /** 喂一行 Chat SSE data 内容（已去掉 'data:' 前缀），返回 Responses 帧。 */
+  feedData(dataStr: string): string[] {
+    const s = dataStr.trim();
+    if (!s) return [];
+    if (s === "[DONE]") return this.finish(null);
+    let d: Json;
+    try { d = JSON.parse(s); } catch { return []; }
+    if (d === null || typeof d !== "object") return [];
+
+    const out: string[] = [];
+    if (!this.started) {
+      this.started = true;
+      this.model = d.model ?? this.model;
+      this.created = d.created ?? this.created;
+      out.push(ChatToResponseStream.frame("response.created", {
+        type: "response.created",
+        response: { id: this.responseId, object: "response",
+                    created_at: this.created, status: "in_progress",
+                    model: this.model, output: [] } }));
+    }
+    if (this.finished) return [];
+    const usage = d.usage;
+    if (usage !== null && typeof usage === "object") this.usageData = usage;
+    for (const ch of d.choices ?? []) {
+      const delta = (ch.delta as Json) ?? {};
+      const content = delta.content;
+      if (typeof content === "string" && content) {
+        if (!this.textOpen) out.push(...this.openTextItem());
+        this.textParts.push(content);
+        out.push(ChatToResponseStream.frame("response.output_text.delta", {
+          type: "response.output_text.delta",
+          item_id: "item_0", output_index: 0, content_index: 0,
+          delta: content }));
+      }
+      for (const tc of delta.tool_calls ?? []) {
+        const slot = tc.index ?? 0;
+        let tslot = this.toolSlots.get(slot);
+        const fn = (tc.function as Json) ?? {};
+        if (!tslot) {
+          tslot = { itemId: `item_${slot + 1}`, callId: "", name: "", args: [] };
+          this.toolSlots.set(slot, tslot);
+        }
+        if (tc.id) tslot.callId = tc.id;
+        if (fn.name) tslot.name = fn.name;
+        if (tc.id || fn.name) {
+          // 首次见到该 slot 的标识信息：开 function_call item
+          out.push(ChatToResponseStream.frame("response.output_item.added", {
+            type: "response.output_item.added", output_index: slot + 1,
+            item: { id: tslot.itemId, type: "function_call",
+                    call_id: tslot.callId, name: tslot.name,
+                    arguments: "", status: "in_progress" } }));
+        }
+        if (fn.arguments) {
+          tslot.args.push(fn.arguments);
+          out.push(ChatToResponseStream.frame(
+            "response.function_call_arguments.delta", {
+              type: "response.function_call_arguments.delta",
+              item_id: tslot.itemId, output_index: slot + 1,
+              delta: fn.arguments }));
+        }
+      }
+      if (ch.finish_reason) {
+        out.push(...this.finish(String(ch.finish_reason)));
+        return out;
+      }
+    }
+    return out;
+  }
+
+  /** 收尾：关 text item（若开过）→ 关各工具 item → response.completed。 */
+  private finish(reason: string | null): string[] {
+    if (!this.started || this.finished) return [];
+    this.finished = true;
+    const out: string[] = [];
+    const outputItems: Json[] = [];
+    if (this.textOpen) {
+      const text = this.textParts.join("");
+      out.push(ChatToResponseStream.frame("response.output_text.done", {
+        type: "response.output_text.done",
+        item_id: "item_0", output_index: 0, content_index: 0, text }));
+      out.push(ChatToResponseStream.frame("response.content_part.done", {
+        type: "response.content_part.done",
+        item_id: "item_0", output_index: 0, content_index: 0,
+        part: { type: "output_text", text, annotations: [] } }));
+      out.push(ChatToResponseStream.frame("response.output_item.done", {
+        type: "response.output_item.done", output_index: 0,
+        item: { id: "item_0", type: "message", role: "assistant",
+                status: "completed",
+                content: [{ type: "output_text", text, annotations: [] }] } }));
+      outputItems.push({ id: "item_0", type: "message", role: "assistant",
+                         status: "completed",
+                         content: [{ type: "output_text", text,
+                                     annotations: [] }] });
+    }
+    for (const slot of [...this.toolSlots.keys()].sort((a, b) => a - b)) {
+      const tslot = this.toolSlots.get(slot)!;
+      const args = tslot.args.join("");
+      out.push(ChatToResponseStream.frame(
+        "response.function_call_arguments.done", {
+          type: "response.function_call_arguments.done",
+          item_id: tslot.itemId, output_index: slot + 1, arguments: args }));
+      out.push(ChatToResponseStream.frame("response.output_item.done", {
+        type: "response.output_item.done", output_index: slot + 1,
+        item: { id: tslot.itemId, type: "function_call",
+                call_id: tslot.callId, name: tslot.name,
+                arguments: args, status: "completed" } }));
+      outputItems.push({ id: tslot.itemId, type: "function_call",
+                         call_id: tslot.callId, name: tslot.name,
+                         arguments: args, status: "completed" });
+    }
+    const u = this.usageData;
+    const incomplete = reason === "length";
+    const response: Json = {
+      id: this.responseId, object: "response", created_at: this.created,
+      status: incomplete ? "incomplete" : "completed",
+      model: this.model, output: outputItems,
+      usage: { input_tokens: u.prompt_tokens ?? 0,
+               output_tokens: u.completion_tokens ?? 0,
+               input_tokens_details: {
+                 cached_tokens: u.prompt_tokens_details?.cached_tokens ?? 0 },
+               output_tokens_details: { reasoning_tokens: 0 } } };
+    if (incomplete) response.incomplete_details = { reason: "max_output_tokens" };
+    out.push(ChatToResponseStream.frame("response.completed",
+                                        { type: "response.completed", response }));
+    return out;
+  }
+}
+
 

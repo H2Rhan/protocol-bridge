@@ -206,7 +206,7 @@ async function main(): Promise<number> {
       check("流式轮照常进埋点", false, String(e));
     }
 
-    console.log("\n7) SSE 直通流式（同协议透传）+ 未实现方向显式 501");
+    console.log("\n7) SSE 直通流式（同协议透传）+ responses 四方向逐块转换（v2.2）");
     // 7a anthropic -> anthropic：字节透传，客户端收到原样 Anthropic 事件
     const [fa, ta] = await postStream("/v1/anthropic/to/anthropic",
                                       { model: "mock", stream: true, max_tokens: 64,
@@ -231,16 +231,47 @@ async function main(): Promise<number> {
     const spreadB = tb.length >= 2 ? (tb[tb.length - 1] - tb[0]) / 1000 : 0;
     check("chat 透传逐块到达", spreadB >= 0.015,
           `首尾间隔 ${(spreadB * 1000).toFixed(1)}ms`);
-    // 7c 未实现的流式方向：显式 501（此前是把 SSE 当 JSON 解析炸成 502）
-    try {
-      await post("/v1/openai_response/to/anthropic",
+    // 7c responses 客户端 ← chat 上游：Chat chunk 逐块转 Responses 事件（v2.2）
+    const [fc, tc2] = await postStream("/v1/openai_response/to/openai_chat",
                  { model: "mock", stream: true,
                    input: [{ type: "message", role: "user", content: "hi" }] });
-      check("未实现流式方向显式 501", false, "请求通过了");
-    } catch (e) {
-      check("未实现流式方向显式 501", (e as { status?: number }).status === 501,
-            `HTTP ${(e as { status?: number }).status}`);
-    }
+    const evC = fc.map(tryJson).filter(Boolean);
+    check("responses←chat 收到 response.created",
+          evC.some((d) => d.type === "response.created"), "");
+    const textC = evC.filter((d) => d.type === "response.output_text.delta")
+      .map((d) => d.delta ?? "").join("");
+    check("responses←chat 文本拼合完整", textC === "mock stream reply",
+          JSON.stringify(textC));
+    check("responses←chat 收到 response.completed（含 usage）",
+          evC.some((d) => d.type === "response.completed" &&
+                     d.response?.usage?.output_tokens === 12), "");
+    const spreadC = tc2.length >= 2 ? (tc2[tc2.length - 1] - tc2[0]) / 1000 : 0;
+    check("responses←chat 逐块到达", spreadC >= 0.015,
+          `首尾间隔 ${(spreadC * 1000).toFixed(1)}ms`);
+    // 7d anthropic 客户端 ← responses 上游：三维寻址归一成扁平块（v2.2）
+    const [fd] = await postStream("/v1/anthropic/to/openai_response",
+                 { model: "mock", stream: true, max_tokens: 64,
+                   messages: [{ role: "user", content: "hi" }] });
+    const evD = fd.map(tryJson).filter(Boolean);
+    check("anthropic←responses 收到 message_start",
+          evD.some((d) => d.type === "message_start"), "");
+    const textD = evD.filter((d) => d.type === "content_block_delta")
+      .map((d) => d.delta?.text ?? "").join("");
+    check("anthropic←responses 文本拼合完整", textD === "mock stream reply",
+          JSON.stringify(textD));
+    check("anthropic←responses 收到 message_stop",
+          evD.some((d) => d.type === "message_stop"), "");
+    // 7e response→response 直通：字节透传 + 旁路收集（v2.2）
+    const [fe] = await postStream("/v1/openai_response/to/openai_response",
+                 { model: "mock", stream: true,
+                   input: [{ type: "message", role: "user", content: "hi" }] });
+    const evE = fe.map(tryJson).filter(Boolean);
+    check("responses 直通收到 response.completed",
+          evE.some((d) => d.type === "response.completed"), "");
+    const textE = evE.filter((d) => d.type === "response.output_text.delta")
+      .map((d) => d.delta ?? "").join("");
+    check("responses 直通文本拼合完整", textE === "mock stream reply",
+          JSON.stringify(textE));
   } finally {
     stop(tmp);
   }

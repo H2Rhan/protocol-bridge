@@ -26,6 +26,8 @@ import { load as loadSessionConfig } from "../state/session_config.ts";
 import { SessionStore, Session } from "../state/store.ts";
 import { MetricsLog, NORMAL, WARMUP } from "../observability/metrics.ts";
 import { AnthropicToChatStream, ChatStreamCollector, ChatToAnthropicStream,
+         ResponseStreamCollector, ResponseToAnthropicStream, ResponseToChatStream,
+         AnthropicToResponseStream, ChatToResponseStream,
          SseEventParser } from "./sse.ts";
 
 /** 模块级可变配置（对齐 Python 的模块全局，测试可整体替换）。 */
@@ -189,12 +191,17 @@ export function convert(source: string, target: string, payload: ir.Json,
     }
   }
 
-  // 需要会话的三种情况，缺一个多轮链路就起不来：
-  //   anthropic       —— 记忆注入 + 断点布局都要挂会话
-  //   openai_response —— Responses 是带状态协议，网关必须回一个自己能解析的
-  //                      response_id 给客户端，否则第一轮之后无从续接
+  // 需要会话的四种情况，缺一个多轮链路就起不来：
+  //   target=anthropic       —— 记忆注入 + 断点布局都要挂会话
+  //   target=openai_response —— Responses 是带状态协议，网关必须回一个自己能解析的
+  //                            response_id 给客户端，否则第一轮之后无从续接
+  //   source=openai_response —— 客户端说 Responses 协议，下轮会带
+  //                            previous_response_id 回来（第五轮自查：原条件只看
+  //                            target，response→chat 方向无会话可挂，流式铸造的
+  //                            responseId 无人登记，多轮链静默退化成无状态）
   //   previous_response_id 已解析出会话
-  if (session === null && (target === "anthropic" || target === "openai_response")) {
+  if (session === null && (target === "anthropic" || target === "openai_response" ||
+                           source === "openai_response")) {
     // 空键隔离（第四轮自查）：key_fields 拼出的状态键为空（客户端没带指定
     // 请求头）时，若直接用 "" 作键，所有匿名请求会共用同一个会话——历史、
     // 记忆注入、工具 ID 映射全部跨客户端串味。退化为一次性 ephemeral 键：
@@ -332,10 +339,15 @@ function usageFor(target: string, resp: ir.Json): ir.IRUsage {
  *
  * 流式场景传入的 backendResp 是 AnthropicToChatStream.syntheticResponse()
  * 拼出的非流式形状——两条路径语义一致，不另造埋点口径。
+ *
+ * registerResponseId（v2.2）：流式 responses 客户端时，转换器已在事件流里
+ * 铸好 response id 并下发——这里登记的必须是**同一个 id**，否则客户端下轮
+ * 拿它做 previous_response_id 会 404。非流式路径不传（网关在 body 里改 id）。
  */
 export function finalizeTurn(target: string, backendResp: ir.Json, req: ir.IRRequest,
                              dropped: Dropped, session: Session | null,
-                             replayedHist: ir.Message[], warmup: boolean): string | null {
+                             replayedHist: ir.Message[], warmup: boolean,
+                             registerResponseId?: string): string | null {
   const usage = usageFor(target, backendResp);
   // 重放代价只算真正重放的历史切片，不含本轮新消息
   const replayedChars = replayedHist.reduce(
@@ -372,7 +384,13 @@ export function finalizeTurn(target: string, backendResp: ir.Json, req: ir.IRReq
       }
       gw.STORE.append(session, newTurn);
     }
-    rid = gw.STORE.recordResponse(session);
+    rid = registerResponseId ?? gw.STORE.recordResponse(session);
+    if (registerResponseId) {
+      // 转换器铸造的 id：补登记进 resp_index（recordResponse 的等价物，
+      // 但 id 外部给定——responses 流式帧里已经下发给客户端了）
+      gw.STORE.registerResponseId(session, registerResponseId);
+      rid = registerResponseId;
+    }
   }
   return rid;
 }
@@ -450,11 +468,11 @@ export async function handleRequest(req: http.IncomingMessage,
     }
   }
 
-  // SSE 流式（LIMITATIONS #1）：
+  // SSE 流式（LIMITATIONS #1，v2.2 起 9 方向全闭环）：
   //   chat 客户端 ← anthropic 上游 —— 逐块转换（v1.6）
-  //   同协议直通（chat←chat / anthropic←anthropic）—— 字节透传 + 旁路收集（v1.7）
-  // 其余方向（response 源三维寻址 / anthropic←chat 等）未实现：
-  // 显式 501——否则 postJson 会把 SSE 当 JSON 解析，炸成语焉不详的 502。
+  //   anthropic 客户端 ← chat 上游 —— 逐块转换（v2.1）
+  //   同协议直通（chat / anthropic / responses）—— 字节透传 + 旁路收集（v1.7/v2.2）
+  //   responses 相关四方向 —— 三维寻址归一逐块转换（v2.2）
   // warmup+stream 已在上方被 validateWarmup 拦截，走到这里的一定不是预热轮。
   if (out.stream) {
     if (source === "openai_chat" && target === "anthropic") {
@@ -463,16 +481,29 @@ export async function handleRequest(req: http.IncomingMessage,
     if (source === "anthropic" && target === "openai_chat") {
       return streamFromChatUpstream(res, out, irReq, dropped, session, replayed);
     }
-    if (source === target && (source === "openai_chat" || source === "anthropic")) {
-      return streamPassthrough(res, out, irReq, dropped, session, replayed, target);
+    if (source === "openai_response" && target === "anthropic") {
+      return streamFromAnthropicToResponse(res, out, irReq, dropped, session,
+                                           replayed);
+    }
+    if (source === "openai_response" && target === "openai_chat") {
+      return streamFromChatToResponse(res, out, irReq, dropped, session,
+                                      replayed);
+    }
+    if (source === "anthropic" && target === "openai_response") {
+      return streamFromResponses(res, out, irReq, dropped, session, replayed,
+                                 "anthropic");
+    }
+    if (source === "openai_chat" && target === "openai_response") {
+      return streamFromResponses(res, out, irReq, dropped, session, replayed,
+                                 "openai_chat");
+    }
+    if (source === target) {
+      return streamPassthrough(res, out, irReq, dropped, session, replayed,
+                               target);
     }
     return jsonResponse(res, 501, { error: {
       message: `暂不支持 ${source} -> ${target} 方向的流式；请改用 stream:false`,
-      type: "invalid_request_error",
-      supported_streaming: ["openai_chat->anthropic",
-                            "anthropic->openai_chat",
-                            "openai_chat->openai_chat",
-                            "anthropic->anthropic"] } });
+      type: "invalid_request_error" } });
   }
 
   // mock 与真实后端走同一套端点映射。tools/mock_backend 已按端点路径
@@ -651,6 +682,165 @@ async function streamFromChatUpstream(res: http.ServerResponse, out: ir.Json,
                session, replayed, false);
 }
 
+/** SSE 逐块流式（v2.2）：responses 客户端 ← anthropic 上游。
+ * 转换器铸造的 responseId 随帧下发，finalizeTurn 登记同一个 id 维持多轮链。 */
+async function streamFromAnthropicToResponse(
+    res: http.ServerResponse, out: ir.Json, irReq: ir.IRRequest,
+    dropped: Dropped, session: Session | null,
+    replayed: ir.Message[]): Promise<void> {
+  const path = gw.BACKEND_PATH.anthropic;
+  await GATE.acquire();
+  let upstream: http.IncomingMessage;
+  try {
+    upstream = await openStream(gw.BACKEND_URL + path, out, "anthropic");
+  } catch (e) {
+    GATE.release();
+    return upstreamErrorResponse(res, e);
+  }
+
+  sseHead(res);
+  const conv = new AnthropicToResponseStream();
+  const collector = new AnthropicToChatStream(); // 旁路汇总（帧丢弃）
+  const parser = new SseEventParser();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  try {
+    for await (const chunk of upstream) {
+      const text = decoder.decode(chunk as Buffer, { stream: true });
+      for (const [event, data] of parser.feed(text)) {
+        collector.feed(event, data);
+        for (const frame of conv.feedEvent(event, data)) {
+          if (!res.write(frame)) await once(res, "drain");
+        }
+      }
+    }
+    const tail = decoder.decode();
+    for (const [event, data] of parser.feed(tail)) {
+      collector.feed(event, data);
+      for (const frame of conv.feedEvent(event, data)) res.write(frame);
+    }
+  } catch {
+    // 客户端中途断开：流尾落库/埋点照常（这轮 API 费用已实际发生）
+  } finally {
+    upstream.destroy();
+    res.end();
+    GATE.release();
+  }
+  finalizeTurn("anthropic", collector.syntheticResponse(), irReq, dropped,
+               session, replayed, false, conv.responseId);
+}
+
+/** SSE 逐块流式（v2.2）：responses 客户端 ← chat 上游。
+ * 注入 stream_options.include_usage（客户端只见转换后的 Responses 帧，不可见）。 */
+async function streamFromChatToResponse(
+    res: http.ServerResponse, out: ir.Json, irReq: ir.IRRequest,
+    dropped: Dropped, session: Session | null,
+    replayed: ir.Message[]): Promise<void> {
+  const path = gw.BACKEND_PATH.openai_chat;
+  out.stream_options = { ...(out.stream_options ?? {}), include_usage: true };
+  await GATE.acquire();
+  let upstream: http.IncomingMessage;
+  try {
+    upstream = await openStream(gw.BACKEND_URL + path, out, "openai_chat");
+  } catch (e) {
+    GATE.release();
+    return upstreamErrorResponse(res, e);
+  }
+
+  sseHead(res);
+  const conv = new ChatToResponseStream();
+  const collector = new ChatStreamCollector(); // 旁路汇总（帧丢弃）
+  const parser = new SseEventParser();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  try {
+    for await (const chunk of upstream) {
+      const text = decoder.decode(chunk as Buffer, { stream: true });
+      for (const [, data] of parser.feed(text)) {
+        const s = typeof data === "string" ? data : JSON.stringify(data);
+        collector.feedData(s);
+        for (const frame of conv.feedData(s)) {
+          if (!res.write(frame)) await once(res, "drain");
+        }
+      }
+    }
+    const tail = decoder.decode();
+    for (const [, data] of parser.feed(tail)) {
+      const s = typeof data === "string" ? data : JSON.stringify(data);
+      collector.feedData(s);
+      for (const frame of conv.feedData(s)) res.write(frame);
+    }
+  } catch {
+    // 客户端中途断开：流尾落库/埋点照常
+  } finally {
+    upstream.destroy();
+    res.end();
+    GATE.release();
+  }
+  finalizeTurn("openai_chat", collector.syntheticResponse(), irReq, dropped,
+               session, replayed, false, conv.responseId);
+}
+
+/** SSE 逐块流式（v2.2）：anthropic/chat 客户端 ← responses 上游。
+ * clientProto 决定下游帧形状；上游 response.completed 自带完整响应，
+ * ResponseStreamCollector 直接取作流尾汇总。 */
+async function streamFromResponses(
+    res: http.ServerResponse, out: ir.Json, irReq: ir.IRRequest,
+    dropped: Dropped, session: Session | null,
+    replayed: ir.Message[], clientProto: string): Promise<void> {
+  const path = gw.BACKEND_PATH.openai_response;
+  await GATE.acquire();
+  let upstream: http.IncomingMessage;
+  try {
+    upstream = await openStream(gw.BACKEND_URL + path, out, "openai_response");
+  } catch (e) {
+    GATE.release();
+    return upstreamErrorResponse(res, e);
+  }
+
+  sseHead(res);
+  const conv = clientProto === "anthropic"
+    ? new ResponseToAnthropicStream() : new ResponseToChatStream();
+  const collector = new ResponseStreamCollector();
+  const parser = new SseEventParser();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  try {
+    for await (const chunk of upstream) {
+      const text = decoder.decode(chunk as Buffer, { stream: true });
+      for (const [event, data] of parser.feed(text)) {
+        collector.feedEvent(event, data);
+        for (const frame of conv.feedEvent(event, data)) {
+          if (!res.write(frame)) await once(res, "drain");
+        }
+      }
+    }
+    const tail = decoder.decode();
+    for (const [event, data] of parser.feed(tail)) {
+      collector.feedEvent(event, data);
+      for (const frame of conv.feedEvent(event, data)) res.write(frame);
+    }
+  } catch {
+    // 客户端中途断开：流尾落库/埋点照常
+  } finally {
+    upstream.destroy();
+    res.end();
+    GATE.release();
+  }
+  finalizeTurn("openai_response", collector.syntheticResponse(), irReq,
+               dropped, session, replayed, false);
+}
+
+/** 上游错误的统一响应（v2.2 抽出：四个流式入口共用）。 */
+function upstreamErrorResponse(res: http.ServerResponse, e: unknown): void {
+  if (e instanceof UpstreamHttpError) {
+    jsonResponse(res, e.statusCode, {
+      error: { message: "backend error", type: "upstream_error",
+               status: e.statusCode, detail: e.body } });
+    return;
+  }
+  jsonResponse(res, 502, {
+    error: { message: `backend unreachable: ${(e as Error).message}`,
+             type: "upstream_error" } });
+}
+
 /** 同协议直通流式（v1.7）：字节原样透传，旁路收集流尾汇总。
  *
  * 与转换流式的差别：转发的是上游**原始字节**（一个比特都不动），
@@ -680,7 +870,8 @@ async function streamPassthrough(res: http.ServerResponse, out: ir.Json,
   sseHead(res);
   // 复用转换器/收集器做旁路汇总（其产出帧丢弃，只要 usage/文本）
   const anthropicCollector = target === "anthropic" ? new AnthropicToChatStream() : null;
-  const chatCollector = target === "anthropic" ? null : new ChatStreamCollector();
+  const responseCollector = target === "openai_response" ? new ResponseStreamCollector() : null;
+  const chatCollector = (anthropicCollector || responseCollector) ? null : new ChatStreamCollector();
   const parser = new SseEventParser();
   const decoder = new TextDecoder("utf-8", { fatal: false });
   try {
@@ -691,6 +882,10 @@ async function streamPassthrough(res: http.ServerResponse, out: ir.Json,
       if (anthropicCollector) {
         for (const [event, data] of parser.feed(text)) {
           anthropicCollector.feed(event, data);
+        }
+      } else if (responseCollector) {
+        for (const [event, data] of parser.feed(text)) {
+          responseCollector.feedEvent(event, data);
         }
       } else {
         for (const [event, data] of parser.feed(text)) {
@@ -704,6 +899,8 @@ async function streamPassthrough(res: http.ServerResponse, out: ir.Json,
     const tail = decoder.decode();
     if (anthropicCollector) {
       for (const [event, data] of parser.feed(tail)) anthropicCollector.feed(event, data);
+    } else if (responseCollector) {
+      for (const [event, data] of parser.feed(tail)) responseCollector.feedEvent(event, data);
     } else {
       for (const [, data] of parser.feed(tail)) {
         if (typeof data === "string") chatCollector!.feedData(data);
@@ -720,7 +917,9 @@ async function streamPassthrough(res: http.ServerResponse, out: ir.Json,
 
   const synthetic = anthropicCollector
     ? anthropicCollector.syntheticResponse()
-    : chatCollector!.syntheticResponse();
+    : responseCollector
+      ? responseCollector.syntheticResponse()
+      : chatCollector!.syntheticResponse();
   finalizeTurn(target, synthetic, irReq, dropped, session, replayed, false);
 }
 

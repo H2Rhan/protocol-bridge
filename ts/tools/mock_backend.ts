@@ -156,8 +156,52 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 流式响应。Anthropic 路径发**完整官方事件序列**（message_start →
  * content_block_* → message_delta → message_stop，带 usage 与缓存字段），
- * 供网关 SSE 逐块转换的离线测试；chat 路径发 Chat 形状 chunk。 */
+ * 供网关 SSE 逐块转换的离线测试；chat 路径发 Chat 形状 chunk；
+ * responses 路径发官方三维寻址事件序列（response.created →
+ * output_item/content_part.added → output_text.delta* → *.done →
+ * response.completed，completed 自带完整响应与 usage）。 */
 async function* sseLines(payload: Json, path: string): AsyncGenerator<string> {
+  if (path.replace(/\/$/, "").endsWith("/responses")) {
+    const [, read] = cacheTick(payload);
+    const chunks = ["mock ", "stream ", "reply"];
+    const text = chunks.join("");
+    const respId = "resp_mock_stream";
+    const itemId = "item_mock_1";
+    const ev = (name: string, obj: Json): string =>
+      `event: ${name}\ndata: ${JSON.stringify({ type: name, ...obj })}\n\n`;
+    yield ev("response.created", { response: {
+      id: respId, object: "response", created_at: Math.floor(Date.now() / 1000),
+      status: "in_progress", model: payload.model ?? "mock", output: [] } });
+    yield ev("response.output_item.added", { output_index: 0, item: {
+      id: itemId, type: "message", role: "assistant",
+      status: "in_progress", content: [] } });
+    yield ev("response.content_part.added", {
+      item_id: itemId, output_index: 0, content_index: 0,
+      part: { type: "output_text", text: "", annotations: [] } });
+    for (const c of chunks) {
+      yield ev("response.output_text.delta", {
+        item_id: itemId, output_index: 0, content_index: 0, delta: c });
+      await sleep(10);
+    }
+    yield ev("response.output_text.done", {
+      item_id: itemId, output_index: 0, content_index: 0, text });
+    yield ev("response.content_part.done", {
+      item_id: itemId, output_index: 0, content_index: 0,
+      part: { type: "output_text", text, annotations: [] } });
+    yield ev("response.output_item.done", { output_index: 0, item: {
+      id: itemId, type: "message", role: "assistant", status: "completed",
+      content: [{ type: "output_text", text, annotations: [] }] } });
+    yield ev("response.completed", { response: {
+      id: respId, object: "response", created_at: Math.floor(Date.now() / 1000),
+      status: "completed", model: payload.model ?? "mock",
+      output: [{ id: itemId, type: "message", role: "assistant",
+                 status: "completed",
+                 content: [{ type: "output_text", text, annotations: [] }] }],
+      usage: { input_tokens: inputChars(payload), output_tokens: 12,
+               input_tokens_details: { cached_tokens: read },
+               output_tokens_details: { reasoning_tokens: 0 } } } });
+    return;
+  }
   if (path.replace(/\/$/, "").endsWith("/v1/messages") || path.endsWith("/messages")) {
     const [creation, read] = cacheTick(payload);
     const chunks = ["mock ", "stream ", "reply"];
